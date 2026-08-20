@@ -22,6 +22,61 @@ UNIT_TEMPLATE="${ROOT_DIR}/deploy/url-checker.service"
 log() { printf '[deploy-vm] %s\n' "$*"; }
 die() { printf '[deploy-vm] ERROR: %s\n' "$*" >&2; exit 1; }
 
+# Optional: create a small swapfile when RAM is very low (helps npm/Playwright survive).
+# Set ENSURE_SWAP=0 to disable. Default size 2G.
+ensure_swap_if_needed() {
+  if [[ "${ENSURE_SWAP:-1}" != "1" ]]; then
+    return
+  fi
+  if ! command -v free >/dev/null 2>&1; then
+    return
+  fi
+
+  local mem_mb swap_mb
+  mem_mb="$(free -m | awk '/^Mem:/{print $2}')"
+  swap_mb="$(free -m | awk '/^Swap:/{print $2}')"
+  if [[ -z "$mem_mb" ]]; then
+    return
+  fi
+
+  # Only auto-add swap on hosts with < 2048 MB RAM and little/no swap
+  if [[ "$mem_mb" -ge 2048 ]]; then
+    return
+  fi
+  if [[ "${swap_mb:-0}" -ge 1024 ]]; then
+    log "Swap already present (${swap_mb} MB)"
+    return
+  fi
+
+  local swapfile="${SWAPFILE_PATH:-/swapfile}"
+  local swap_size="${SWAP_SIZE:-2G}"
+  log "Low RAM (${mem_mb} MB) — ensuring swap ${swapfile} (${swap_size})"
+
+  if [[ -f "$swapfile" ]]; then
+    if ! swapon --show | grep -q "$swapfile"; then
+      if [[ "$(id -u)" -eq 0 ]]; then
+        swapon "$swapfile" || true
+      else
+        sudo swapon "$swapfile" || true
+      fi
+    fi
+    return
+  fi
+
+  if [[ "$(id -u)" -eq 0 ]]; then
+    fallocate -l "$swap_size" "$swapfile" || dd if=/dev/zero of="$swapfile" bs=1M count=2048
+    chmod 600 "$swapfile"
+    mkswap "$swapfile"
+    swapon "$swapfile"
+  else
+    sudo fallocate -l "$swap_size" "$swapfile" || sudo dd if=/dev/zero of="$swapfile" bs=1M count=2048
+    sudo chmod 600 "$swapfile"
+    sudo mkswap "$swapfile"
+    sudo swapon "$swapfile"
+  fi
+  log "Swap enabled"
+}
+
 for arg in "$@"; do
   case "$arg" in
     --build-only) BUILD_ONLY=1 ;;
@@ -80,18 +135,37 @@ install_os_packages() {
 
 install_app() {
   need_cmd npm
-  log "Installing npm dependencies (npm ci)"
-  npm ci
 
-  log "Installing Playwright Chromium + OS deps"
+  # Small VMs often OOM when `npm ci` runs postinstall `playwright install chromium`
+  # at the same time as resolving packages. Split install + browser download.
+  if command -v free >/dev/null 2>&1; then
+    log "Memory before install:"
+    free -h || true
+  fi
+
+  log "Installing npm dependencies (npm ci, skip Playwright browser download)"
+  export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+  # --ignore-scripts avoids postinstall entirely (more reliable on low-RAM hosts)
+  npm ci --ignore-scripts
+  unset PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
+
+  log "Installing Playwright Chromium OS deps"
   if [[ "$(id -u)" -eq 0 ]]; then
     npx playwright install-deps chromium || true
   else
     sudo npx playwright install-deps chromium || true
   fi
+
+  log "Downloading Playwright Chromium browser"
   npx playwright install chromium
 
   log "Building Next.js app"
+  # Cap Node heap so the build is less likely to trigger the kernel OOM killer
+  # on 1–2 GB VMs (override with NODE_OPTIONS if needed).
+  if [[ -z "${NODE_OPTIONS:-}" ]]; then
+    export NODE_OPTIONS="--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE:-1536}"
+  fi
+  log "NODE_OPTIONS=${NODE_OPTIONS}"
   npm run build
 }
 
@@ -145,6 +219,7 @@ main() {
 
   install_os_packages
   install_node_if_needed
+  ensure_swap_if_needed
   install_app
 
   if [[ "$BUILD_ONLY" -eq 1 ]]; then

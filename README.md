@@ -353,7 +353,7 @@ Filenames look like `url-checker-example.com-20260820-143005-light.json`.
 
 ## Deployment (Vercel / Netlify)
 
-For **production Playwright checks**, use a **VM or container** instead — see **[DEPLOYMENT.md](DEPLOYMENT.md)** (`scripts/deploy-vm.sh`, `scripts/deploy-container.sh`).
+For **production Playwright checks**, use a **VM or container** instead — see **[DEPLOYMENT.md](DEPLOYMENT.md)** (`scripts/deploy-vm.sh`, `scripts/deploy-container.sh`). Manual GitHub Actions SSH deploy to a VM is documented there as well (`workflow_dispatch` only).
 
 This app is **Next.js** (not TanStack/Nitro). Vercel/Netlify configs below are for optional UI hosting only.
 

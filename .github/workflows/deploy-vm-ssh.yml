@@ -1,0 +1,105 @@
+# Manual deploy of URL Checker to a remote VM over SSH.
+# Trigger: Actions → "Deploy VM (SSH)" → Run workflow
+# Does NOT run on push/PR.
+
+name: Deploy VM (SSH)
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: "Git ref to deploy on the VM (branch, tag, or commit SHA). Leave empty to use the branch selected in the Run workflow UI."
+        required: false
+        default: ""
+        type: string
+      skip_deploy_script:
+        description: "Only git fetch/checkout/pull — do not run scripts/deploy-vm.sh"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: deploy-vm-ssh
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: SSH deploy to VM
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Resolve deploy ref
+        id: ref
+        run: |
+          set -euo pipefail
+          INPUT_REF="${{ inputs.git_ref }}"
+          if [ -n "$INPUT_REF" ]; then
+            echo "value=${INPUT_REF}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VM_SSH_HOST }}
+          username: ${{ secrets.VM_SSH_USER }}
+          key: ${{ secrets.VM_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.VM_SSH_PORT != '' && secrets.VM_SSH_PORT || 22 }}
+          script_stop: true
+          command_timeout: 40m
+          script: |
+            set -euo pipefail
+
+            DEPLOY_PATH="${{ secrets.VM_DEPLOY_PATH }}"
+            DEPLOY_REF="${{ steps.ref.outputs.value }}"
+            APP_PORT="${{ secrets.VM_APP_PORT }}"
+            APP_USER="${{ secrets.VM_APP_USER }}"
+
+            if [ -z "$DEPLOY_PATH" ]; then
+              echo "ERROR: secret VM_DEPLOY_PATH is empty" >&2
+              exit 1
+            fi
+
+            echo "==> Deploy path: $DEPLOY_PATH"
+            echo "==> Git ref:     $DEPLOY_REF"
+
+            cd "$DEPLOY_PATH"
+
+            if [ ! -d .git ]; then
+              echo "ERROR: $DEPLOY_PATH is not a git checkout. Clone the repo there once, then re-run." >&2
+              exit 1
+            fi
+
+            git remote -v
+            git fetch --prune origin
+
+            # Prefer local branch tracking origin; fall back to detached commit/tag.
+            if git show-ref --verify --quiet "refs/remotes/origin/${DEPLOY_REF}"; then
+              git checkout -B "${DEPLOY_REF}" "origin/${DEPLOY_REF}"
+            elif git show-ref --verify --quiet "refs/tags/${DEPLOY_REF}"; then
+              git checkout --force "tags/${DEPLOY_REF}"
+            else
+              git checkout --force "${DEPLOY_REF}"
+            fi
+
+            git rev-parse --short HEAD
+            git status --short || true
+
+            chmod +x scripts/deploy-vm.sh scripts/deploy-container.sh || true
+
+            if [ "${{ inputs.skip_deploy_script }}" = "true" ]; then
+              echo "==> skip_deploy_script=true — git update only"
+              exit 0
+            fi
+
+            export PORT="${APP_PORT:-3000}"
+            if [ -n "${APP_USER:-}" ]; then
+              export APP_USER
+            fi
+
+            echo "==> Running scripts/deploy-vm.sh (PORT=${PORT})"
+            ./scripts/deploy-vm.sh
+
+            echo "==> Deploy finished"

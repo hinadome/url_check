@@ -15,6 +15,7 @@ Related files:
 | [`Dockerfile`](Dockerfile) | Production image (Playwright base + Next.js) |
 | [`docker-compose.yml`](docker-compose.yml) | One-service Compose stack (`shm_size` for Chromium) |
 | [`vercel.json`](vercel.json) / [`netlify.toml`](netlify.toml) | Optional serverless UI hosting (Playwright often unreliable) |
+| [`.github/workflows/deploy-vm-ssh.yml`](.github/workflows/deploy-vm-ssh.yml) | **Manual** GitHub Actions deploy to a VM over SSH |
 
 ---
 
@@ -33,9 +34,9 @@ Related files:
 
 1. Installs base OS packages via `apt-get` when available (`curl`, `git`, `build-essential`, …).
 2. Ensures **Node.js ≥ 20** (installs NodeSource Node 20.x if needed).
-3. Runs `npm ci`.
-4. Installs Playwright Chromium OS deps (`playwright install-deps`) when possible, then `playwright install chromium`.
-5. Runs `npm run build`.
+3. Runs `npm ci --ignore-scripts` with Playwright browser download skipped (avoids OOM on small VMs).
+4. Installs Playwright Chromium OS deps, then downloads Chromium in a separate step.
+5. Runs `npm run build` (with a capped Node heap by default).
 6. Unless `--build-only` / `--no-systemd`:
    - Writes `/etc/systemd/system/url-checker.service` from [`deploy/url-checker.service`](deploy/url-checker.service)
    - `daemon-reload`, `enable`, `restart`
@@ -74,6 +75,9 @@ PORT=8080 APP_USER=ubuntu ./scripts/deploy-vm.sh
 | `APP_USER` | current user | systemd `User=` |
 | `APP_NAME` | `url-checker` | systemd unit name (`url-checker.service`) |
 | `NODE_MAJOR` | `20` | Minimum / install major Node version |
+| `ENSURE_SWAP` | `1` | Auto-create/enable ~2G swap when RAM < 2 GB (`0` to disable) |
+| `SWAP_SIZE` | `2G` | Size passed to `fallocate` when creating swap |
+| `NODE_MAX_OLD_SPACE_SIZE` | `1536` | Node heap cap for `next build` (MB) unless `NODE_OPTIONS` is already set |
 
 ### systemd lifecycle
 
@@ -96,6 +100,7 @@ curl -sI "http://127.0.0.1:${PORT:-3000}/"
 
 | Issue | What to try |
 |-------|-------------|
+| `playwright install chromium` / `npm ci` **Killed** | Linux OOM killer — common on 1–2 GB VMs. Updated `deploy-vm.sh` skips browser download during `npm ci`, installs Chromium separately, and may add swap when RAM < 2 GB. Re-pull and re-run `./scripts/deploy-vm.sh`. Disable auto-swap with `ENSURE_SWAP=0`. |
 | `playwright install-deps` fails | Run as root/sudo; on non-Debian install Chromium system libraries manually from Playwright docs |
 | Service exits immediately | `journalctl -u url-checker -e`; confirm `WorkingDirectory` and Node path |
 | Checks timeout / OOM | Add RAM; lower concurrent use; ensure `/dev/shm` is reasonably sized |
@@ -190,6 +195,82 @@ docker compose logs --tail=100 url-checker
 | You need to debug Playwright OS libraries on the host | You want isolation from the host Node version |
 
 Both approaches support real Chromium and are suitable for `/api/check`. Serverless (Vercel/Netlify) is not a substitute for these for reliable Playwright execution.
+
+---
+
+## 3. GitHub Actions → VM over SSH (manual only)
+
+Workflow: [`.github/workflows/deploy-vm-ssh.yml`](.github/workflows/deploy-vm-ssh.yml)
+
+- **Trigger:** `workflow_dispatch` only (Actions UI → **Deploy VM (SSH)** → **Run workflow**).
+- **Does not** run on `push`, `pull_request`, or schedule.
+- SSHes into the VM, updates the git checkout, then runs [`scripts/deploy-vm.sh`](scripts/deploy-vm.sh).
+
+### One-time VM setup
+
+1. Clone the repo on the server (deploy path must already be a git working tree):
+
+   ```bash
+   sudo mkdir -p /opt/url_checker
+   sudo chown "$USER":"$USER" /opt/url_checker
+   git clone git@github.com:<org>/<repo>.git /opt/url_checker
+   # or HTTPS clone with a deploy key / credential helper
+   ```
+
+2. Ensure the SSH user can run the deploy script (Node/npm, and preferably passwordless `sudo` for apt / systemd / Playwright deps — same as local VM deploy).
+
+3. Confirm a manual deploy works once:
+
+   ```bash
+   cd /opt/url_checker
+   ./scripts/deploy-vm.sh
+   ```
+
+4. Allow the GitHub Actions runner to reach the VM on the SSH port (firewall / security group).
+
+### GitHub repository secrets
+
+Settings → Secrets and variables → Actions → **New repository secret**:
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `VM_SSH_HOST` | Yes | VM hostname or IP |
+| `VM_SSH_USER` | Yes | SSH username |
+| `VM_SSH_PRIVATE_KEY` | Yes | Private key (PEM) whose public key is in `~/.ssh/authorized_keys` on the VM |
+| `VM_DEPLOY_PATH` | Yes | Absolute path to the git checkout (e.g. `/opt/url_checker`) |
+| `VM_SSH_PORT` | No | SSH port (default **22** if unset/empty) |
+| `VM_APP_PORT` | No | App `PORT` for `deploy-vm.sh` (default **3000**) |
+| `VM_APP_USER` | No | systemd service user (`APP_USER`); defaults to SSH user on the script side if empty |
+
+Use a **dedicated deploy key** with the least privilege needed (repo read on the VM clone remote; SSH login limited to deploy).
+
+### How to run (manual hook)
+
+1. Push the code you want deployed to GitHub (so the VM can `git fetch` it).
+2. Open the repo on GitHub → **Actions**.
+3. Select workflow **Deploy VM (SSH)**.
+4. Click **Run workflow**.
+5. Choose the branch (used when `git_ref` is left empty).
+6. Optional inputs:
+   - **git_ref** — branch / tag / SHA to check out on the VM (empty = branch selected in the UI).
+   - **skip_deploy_script** — only update git; skip `./scripts/deploy-vm.sh`.
+7. Run and watch the job log.
+
+### What the workflow runs remotely
+
+```text
+cd $VM_DEPLOY_PATH
+git fetch --prune origin
+git checkout <ref>
+./scripts/deploy-vm.sh    # unless skip_deploy_script=true
+```
+
+### Notes / limits
+
+- Concurrency group `deploy-vm-ssh` prevents overlapping deploys (new runs wait; in-progress is not cancelled).
+- Job timeout is 45 minutes (Playwright install + build can be slow on first run).
+- The workflow does **not** build in GitHub-hosted runners for production; build happens **on the VM** via `deploy-vm.sh`.
+- If `git fetch` fails, fix remotes/credentials on the VM (SSH deploy key to GitHub, or HTTPS token).
 
 ---
 

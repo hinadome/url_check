@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Network CSV (index)** — metadata columns only (no header maps or body content)
 - Deploy configs for **Vercel** (`vercel.json`) and **Netlify** (`netlify.toml`) with Next.js native hosting; README documents Playwright serverless limits
 - **VM** and **container** deploy scripts plus [`DEPLOYMENT.md`](DEPLOYMENT.md): `scripts/deploy-vm.sh`, `scripts/deploy-container.sh`, `Dockerfile`, `docker-compose.yml`, `deploy/url-checker.service`
+- GitHub Actions **manual** SSH VM deploy: [`.github/workflows/deploy-vm-ssh.yml`](.github/workflows/deploy-vm-ssh.yml) (`workflow_dispatch` only)
+- VM deploy script avoids OOM during `npm ci` by skipping Playwright postinstall / browser download, installing Chromium separately, and optionally enabling swap on low-RAM hosts
 
 ### Changed
 
@@ -49,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - `README.md` — [Network requests panel](README.md#network-requests-panel), [Headers display (tabs)](README.md#headers-display-tabs), [Content tab](README.md#content-tab-network-rows-only), [Export](README.md#export), and [Deployment](README.md#deployment-vercel--netlify).
-- [`DEPLOYMENT.md`](DEPLOYMENT.md) — detailed VM vs container deploy scripts and operations.
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) — detailed VM vs container deploy scripts and operations; manual GitHub Actions SSH deploy.
 - `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.
 
 ---

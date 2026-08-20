@@ -11,8 +11,10 @@ ENV PORT=3000
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 COPY package.json package-lock.json ./
-RUN npm ci
-
+# Base image already has browsers; skip download during npm ci (saves RAM/time)
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+RUN npm ci --ignore-scripts
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=
 COPY . .
 RUN npm run build \
   && npm prune --omit=dev
