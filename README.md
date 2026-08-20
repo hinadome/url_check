@@ -15,14 +15,15 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 5. [How content is stored](#how-content-is-stored)
 6. [User interface](#user-interface)
 7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only))
-8. [API reference](#api-reference)
-9. [Project structure](#project-structure)
-10. [Getting started](#getting-started)
-11. [Configuration and limits](#configuration-and-limits)
-12. [Security](#security)
-13. [Limitations and out of scope](#limitations-and-out-of-scope)
-14. [Tech stack](#tech-stack)
-15. [Changelog](#changelog)
+8. [Export](#export)
+9. [API reference](#api-reference)
+10. [Project structure](#project-structure)
+11. [Getting started](#getting-started)
+12. [Configuration and limits](#configuration-and-limits)
+13. [Security](#security)
+14. [Limitations and out of scope](#limitations-and-out-of-scope)
+15. [Tech stack](#tech-stack)
+16. [Changelog](#changelog)
 
 ---
 
@@ -58,6 +59,7 @@ Typical uses:
 | Resource summary | Links, images, stylesheets, scripts, iframes, other URLs from the live DOM |
 | Full content | Screenshot, sandboxed HTML preview, plain-text HTML source |
 | Network log | Date-stamped, filterable table; expandable rows with Request/Response/Content tabs |
+| Export | Client-side downloads: JSON (light/full), PNG, HTML, network CSV index |
 
 ---
 
@@ -200,7 +202,7 @@ Implications:
 Layout (top to bottom after a successful check):
 
 1. **Form** — URL, optional force DNS (host + IP), custom header editor, submit.
-2. **Meta** — status, final URL, timing, DNS override (when used).
+2. **Meta** — status, final URL, timing, DNS override (when used), and **Export** menu.
 3. **HTTP headers** — main-document headers with **Request** / **Response** tabs (full-width table per tab).
 4. **Resource summary** — collapsible lists of URLs found in the rendered DOM.
 5. **Full content**
@@ -211,6 +213,7 @@ Layout (top to bottom after a successful check):
 
 Components live under `components/`:
 
+- `ExportMenu.tsx` — result export dropdown
 - `UrlForm.tsx` / `HeaderEditor.tsx` — input (including DNS override)
 - `HeadersPanel.tsx` / `HeadersTabs.tsx` — main-document headers (Request / Response tabs)
 - `ResourceSummary.tsx` — DOM resource lists
@@ -329,6 +332,24 @@ Collection is capped (see [Configuration and limits](#configuration-and-limits))
 
 ---
 
+## Export
+
+After a successful check, use **Export** on the meta strip (`components/ExportMenu.tsx`). Downloads are built in the browser from the current result (`lib/export.ts`) — nothing is written on the server.
+
+| Menu item | File | Contents |
+|-----------|------|----------|
+| **JSON (light)** — recommended | `.json` | Full result shape; `screenshotBase64` cleared; network `body` cleared (`bodyEncoding: "empty"`). **Keeps** main + per-request headers, resources, HTML, network metadata |
+| **JSON (full)** | `.json` | Complete `CheckResponse` including screenshot base64 and network bodies |
+| **Screenshot (PNG)** | `.png` | Decoded full-page screenshot (disabled if none) |
+| **HTML source** | `.html` | Captured HTML |
+| **Network CSV (index)** | `.csv` | Metadata rows only: `date`, `url`, `host`, `status`, `contentType`, `contentSize`, `resourceType`, `bodyEncoding`, `bodyTruncated`, `requestHeaderCount`, `responseHeaderCount` |
+
+**Design rule:** CSV is a spreadsheet-friendly **index**. Request/response header maps and body content live in **JSON**, not CSV. HAR export is not in v1.
+
+Filenames look like `url-checker-example.com-20260820-143005-light.json`.
+
+---
+
 ## API reference
 
 ### `POST /api/check`
@@ -429,13 +450,15 @@ url_checker/
 │   └── page.tsx              # Main UI + submit flow
 ├── components/
 │   ├── ContentPreview.tsx
+│   ├── ExportMenu.tsx
 │   ├── HeaderEditor.tsx
 │   ├── HeadersPanel.tsx
-│   ├── HeadersTabs.tsx       # Shared Request/Response header tabs
+│   ├── HeadersTabs.tsx       # Shared Request/Response/Content tabs
 │   ├── NetworkRequestsPanel.tsx
 │   ├── ResourceSummary.tsx
 │   └── UrlForm.tsx           # URL, DNS override, headers
 ├── lib/
+│   ├── export.ts             # Client-side export builders (JSON/PNG/HTML/CSV)
 │   ├── extract-resources.ts  # DOM URL extraction
 │   ├── network-collector.ts  # Playwright response log
 │   ├── playwright-fetch.ts   # Browser launch + capture (+ MAP args)
@@ -542,6 +565,7 @@ This is not a full multi-tenant hardening suite. Do not expose an open instance 
 - Sites that block headless browsers, require interactive CAPTCHAs, or depend on special client TLS may fail or look incomplete.
 - DNS override maps a single exact hostname (no multi-host or wildcard UI yet).
 - Third-party hosts are never remapped by the DNS override.
+- Export is client-side only (no server archive store); Network CSV is a metadata index (no header/body cells); HAR not included in v1.
 - No PDF export or editable HTML workspace.
 
 ---

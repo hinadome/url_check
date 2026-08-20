@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ContentPreview } from "@/components/ContentPreview";
+import { ExportMenu } from "@/components/ExportMenu";
 import { HeadersPanel } from "@/components/HeadersPanel";
 import { NetworkRequestsPanel } from "@/components/NetworkRequestsPanel";
 import { ResourceSummary } from "@/components/ResourceSummary";
@@ -67,26 +68,29 @@ export default function Home() {
       {result && !result.error && (
         <div className="results">
           <div className="meta">
-            <span>
-              Status: <strong>{result.status}</strong>
-            </span>
-            <span>
-              Final URL:{" "}
-              <a href={result.finalUrl} target="_blank" rel="noopener noreferrer">
-                {result.finalUrl}
-              </a>
-            </span>
-            <span>
-              Timing: <strong>{result.timingMs} ms</strong>
-            </span>
-            {result.dnsOverride && (
+            <div className="meta-main">
               <span>
-                DNS override:{" "}
-                <strong>
-                  {result.dnsOverride.host} → {result.dnsOverride.ip}
-                </strong>
+                Status: <strong>{result.status}</strong>
               </span>
-            )}
+              <span>
+                Final URL:{" "}
+                <a href={result.finalUrl} target="_blank" rel="noopener noreferrer">
+                  {result.finalUrl}
+                </a>
+              </span>
+              <span>
+                Timing: <strong>{result.timingMs} ms</strong>
+              </span>
+              {result.dnsOverride && (
+                <span>
+                  DNS override:{" "}
+                  <strong>
+                    {result.dnsOverride.host} → {result.dnsOverride.ip}
+                  </strong>
+                </span>
+              )}
+            </div>
+            <ExportMenu result={result} />
           </div>
 
           <HeadersPanel
