@@ -1,36 +1,507 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# URL Checker
 
-## Getting Started
+A Next.js web application that loads any public URL in a real headless Chromium browser (Playwright), then shows what the browser fetched and rendered: HTTP headers, extracted page resources, full-page screenshot, HTML preview, HTML source as plain text, and a full network request log.
 
-First, run the development server:
+Optional **force DNS resolution** maps the URL hostname to a specific IP inside Chromium (bypassing system DNS for that host for the whole check).
+
+---
+
+## Table of contents
+
+1. [Overview](#overview)
+2. [Features](#features)
+3. [Architecture](#architecture)
+4. [Force DNS resolution](#force-dns-resolution)
+5. [How content is stored](#how-content-is-stored)
+6. [User interface](#user-interface)
+7. [Network requests panel](#network-requests-panel)
+8. [API reference](#api-reference)
+9. [Project structure](#project-structure)
+10. [Getting started](#getting-started)
+11. [Configuration and limits](#configuration-and-limits)
+12. [Security](#security)
+13. [Limitations and out of scope](#limitations-and-out-of-scope)
+14. [Tech stack](#tech-stack)
+15. [Changelog](#changelog)
+
+---
+
+## Overview
+
+URL Checker is a single-page tool plus one server API:
+
+1. The user submits a URL, optional custom HTTP headers, and an optional DNS override (hostname → IP).
+2. The server validates input (including SSRF guards), then launches Playwright Chromium.
+3. If a DNS override is set, Chromium is started with `--host-resolver-rules=MAP <host> <ip>`.
+4. The browser navigates to the URL (`waitUntil: "load"`, plus a short best-effort `networkidle` wait).
+5. The server collects HTML, a full-page screenshot, main-document headers, DOM resource URLs, and every network response observed during the load.
+6. The UI displays those results. Nothing is persisted to disk or a database.
+
+Typical uses:
+
+- Inspect how a page looks when rendered by a real browser (not just `curl`).
+- See which hosts, assets, and response headers a page pulls in.
+- Debug custom headers (for example `User-Agent` or `Authorization`) against a live site.
+- Hit a specific origin IP while keeping the public hostname in the URL (pre-cutover, alternate edge, etc.).
+
+---
+
+## Features
+
+| Area | What you get |
+|------|----------------|
+| URL input | HTTP/HTTPS URL to check |
+| Custom headers | Add/remove name–value pairs sent with the Playwright request context |
+| Force DNS | Optional hostname → IP map via Chromium `--host-resolver-rules` |
+| Status / meta | Final URL, HTTP status, timing, applied DNS override |
+| HTTP headers | Main-document request and response headers |
+| Resource summary | Links, images, stylesheets, scripts, iframes, other URLs from the live DOM |
+| Full content | Screenshot, sandboxed HTML preview, plain-text HTML source |
+| Network log | Date-stamped, filterable table of Playwright responses; expandable width |
+
+---
+
+## Architecture
+
+```text
+Browser UI (React)
+    │  POST /api/check  { url, headers?, dnsOverride? }
+    ▼
+Next.js API route (Node.js)
+    │  validate URL + headers + DNS override (SSRF guards)
+    ▼
+Playwright Chromium
+    │  optional: --host-resolver-rules=MAP host ip
+    │  goto → capture HTML, screenshot, headers, DOM resources, network
+    ▼
+JSON response → React state → UI panels
+```
+
+### Request lifecycle
+
+1. **Client** — `app/page.tsx` posts JSON to `/api/check`.
+2. **Validation** — `lib/validate.ts`:
+   - Allows only `http`/`https`, blocks private/localhost targets, filters unsafe headers.
+   - Validates optional `dnsOverride` (public IP; host must match URL hostname).
+   - When a valid override is present, **skips Node DNS lookup** for the URL host (traffic will use the forced IP in Chromium).
+3. **Fetch** — `lib/playwright-fetch.ts` launches Chromium per request (with host-resolver args when overriding), applies `extraHTTPHeaders`, navigates with `waitUntil: "load"`, then optionally waits up to a few seconds for `networkidle` (timeout ignored so busy sites still succeed).
+4. **Capture**
+   - Main document headers via Playwright `allHeaders()`
+   - HTML via `page.content()`
+   - Screenshot via `page.screenshot({ fullPage: true })`
+   - Resources via in-page DOM evaluation (`lib/extract-resources.ts`)
+   - Network responses via a page `response` listener (`lib/network-collector.ts`)
+5. **Respond** — JSON returned to the client (includes `dnsOverride` used, or `null`); browser and in-memory server objects are discarded when the handler finishes.
+6. **Render** — Client stores the payload in React state and renders panels.
+
+Chromium is installed automatically on `npm install` via the `postinstall` script (`playwright install chromium`). Playwright is marked as a server external package in `next.config.ts`.
+
+---
+
+## Force DNS resolution
+
+### Purpose
+
+Force Chromium to connect to a **specific IP** for the URL’s hostname instead of using the machine’s default DNS answer. The browser still uses the real hostname in the URL, TLS SNI, and `Host` header.
+
+### How it is implemented
+
+| Layer | Behavior |
+|-------|----------|
+| UI | `UrlForm` optional fields: hostname + IP (`components/UrlForm.tsx`) |
+| API | `dnsOverride: { host, ip }` on `POST /api/check` |
+| Validation | `validateDnsOverride()` in `lib/validate.ts` |
+| Browser | `chromium.launch({ args: ['--host-resolver-rules=MAP host ip'] })` in `lib/playwright-fetch.ts` |
+
+Chromium’s `MappedHostResolver` applies `--host-resolver-rules` to the **browser-process host resolver**. That means the mapping is **not limited to the first navigation**.
+
+### Scope: which requests use the forced IP?
+
+| Request | Uses forced IP? |
+|---------|-----------------|
+| Initial document navigation to the mapped host | Yes |
+| Later same-host requests (fetch/XHR, scripts, CSS, images, etc.) | Yes |
+| Requests to **other** hostnames (CDNs, third parties) | No — normal DNS |
+| Subdomains not listed in the MAP rule (e.g. `www.` vs apex) | No — only the exact mapped host |
+
+We map **exactly** the URL hostname (or the host you enter, which must equal the URL hostname). Wildcards like `*.example.com` are not supported in the UI/API today.
+
+### UI usage
+
+1. Enter the URL (e.g. `https://example.com/path`).
+2. Under **Force DNS resolution (optional)**:
+   - **Hostname** — leave blank to use the URL hostname, or enter the same hostname explicitly.
+   - **IP address** — public IPv4/IPv6 to dial (e.g. `203.0.113.10`).
+3. Submit. Meta shows `DNS override: host → ip` when applied.
+
+### API example
+
+```bash
+curl -s -X POST http://localhost:3000/api/check \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "url": "https://example.com",
+    "dnsOverride": { "host": "example.com", "ip": "203.0.113.10" }
+  }'
+```
+
+### Validation rules
+
+- `ip` is required if override is set; must be a valid IP.
+- Target IP must **not** be private, loopback, link-local, CGNAT, or other reserved ranges (SSRF).
+- `host` defaults to the URL hostname when omitted; if provided, it **must match** the URL hostname.
+- Blocked hostnames (`localhost`, `*.local`, `*.internal`, etc.) are rejected.
+- With a valid override, server-side Node `dns.lookup` for the URL host is skipped; Chromium dials the forced IP instead.
+
+### TLS note
+
+Because the hostname in the URL is unchanged, certificates are validated for that hostname as usual. If the forced IP does not present a valid cert for that name, navigation fails (e.g. `net::ERR_CERT_COMMON_NAME_INVALID`). That is expected when pointing a name at the wrong host.
+
+### Code map
+
+```text
+components/UrlForm.tsx      → collect dnsHost / dnsIp
+app/api/check/route.ts      → validateDnsOverride + validateUrl({ skipDnsLookup })
+lib/validate.ts             → validateDnsOverride(), validateUrl()
+lib/playwright-fetch.ts     → --host-resolver-rules=MAP …
+lib/types.ts                → DnsOverride on CheckRequest / CheckResponse
+```
+
+---
+
+## How content is stored
+
+| Storage type | Used? | Details |
+|--------------|-------|---------|
+| **Files on disk** | No | The app does not write HTML, screenshots, or logs to the filesystem. |
+| **Memory** | Yes | Server holds results only for the duration of the API request. The browser holds the latest result in React `useState` until refresh, another check, or tab close. |
+| **Other (DB, Redis, localStorage, etc.)** | No | There is no persistence, history, or shared cache. |
+
+Implications:
+
+- Refreshing the page clears results.
+- Concurrent checks do not share stored content.
+- Large pages (big HTML + base64 screenshot + network body sizes) increase peak RAM usage for that request and for the browser tab.
+
+---
+
+## User interface
+
+Layout (top to bottom after a successful check):
+
+1. **Form** — URL, optional force DNS (host + IP), custom header editor, submit.
+2. **Meta** — status, final URL, timing, DNS override (when used).
+3. **HTTP headers** — request headers and response headers (main document) in side-by-side tables.
+4. **Resource summary** — collapsible lists of URLs found in the rendered DOM.
+5. **Full content**
+   - **Screenshot** — full-page PNG (`data:image/png;base64,...`).
+   - **HTML** — sandboxed iframe (`sandbox=""`, `srcDoc`) so scripts do not run in the preview.
+   - **Plain text** — raw HTML source shown as text in a `<pre>` block.
+6. **Network requests** — expandable, filterable table of all responses (see [Network requests panel](#network-requests-panel)).
+
+Components live under `components/`:
+
+- `UrlForm.tsx` / `HeaderEditor.tsx` — input (including DNS override)
+- `HeadersPanel.tsx` — main-document headers
+- `ResourceSummary.tsx` — DOM resource lists
+- `ContentPreview.tsx` — screenshot / HTML / plain text tabs
+- `NetworkRequestsPanel.tsx` — network table (date, expand width, filters)
+
+---
+
+## Network requests panel
+
+The network log is built from Playwright `response` events during the check (`lib/network-collector.ts`) and rendered by `components/NetworkRequestsPanel.tsx`.
+
+### Columns
+
+| Column | Source | Notes |
+|--------|--------|-------|
+| **Date** | `date` (ISO-8601) | When the response was observed on the server; shown in local time; rows sorted chronologically |
+| **URL** | `url` | Full request URL; wraps long paths; `title` attribute has the full value |
+| **Remote host** | `host` | Host portion of the URL |
+| **Status** | `status` | HTTP status code |
+| **Content type** | `contentType` | MIME type (parameters after `;` hidden in the cell) |
+| **Content size** | `contentSize` | From `Content-Length` when present, otherwise response body length when available |
+| **Type** | `resourceType` | Playwright resource type (`document`, `script`, `stylesheet`, etc.) |
+
+### Width and layout
+
+- The panel **breaks out** of the main 960px form column so the table has more horizontal room (up to about `90rem`, or nearly full viewport when expanded).
+- **Expand width** / **Collapse width** toggles near-full-viewport width for long URL lists.
+- Table uses **auto layout** with per-column `min-width` values (not a squeezed fixed layout), so columns do not overlap.
+- The table wrapper scrolls vertically and horizontally when content exceeds the panel.
+
+### Filters
+
+Filtering is **client-side only** (no extra API calls). Controls sit above the table in `NetworkRequestsPanel`. Dropdown options are built from the current result set (unique hosts, statuses, resource types, and shortened content types).
+
+| Control | Behavior |
+|---------|----------|
+| **URL contains** | Case-insensitive substring match on the request URL |
+| **Remote host** | Exact match; options = distinct `host` values in this check |
+| **Status** | Exact HTTP status; options = distinct status codes in this check |
+| **Type** | Exact Playwright `resourceType` (`document`, `script`, `stylesheet`, etc.) |
+| **Content type** | Exact match on shortened MIME type (part before `;`) |
+| **Clear filters** | Resets every control; disabled when nothing is active |
+
+**Match count:** the subtitle shows `Showing N of M responses` and appends `(filtered)` when any filter is active.
+
+**Empty state:** if filters exclude everything, the table is replaced with “No requests match the current filters.”
+
+**Reset on new check:** `app/page.tsx` remounts the panel with `key={finalUrl-timingMs}`, so filter state starts clean for each successful check.
+
+Filters combine with **AND** logic (a row must satisfy every active control).
+
+### API field
+
+Each `networkRequests[]` entry includes:
+
+```json
+{
+  "url": "https://example.com/style.css",
+  "host": "example.com",
+  "status": 200,
+  "contentType": "text/css",
+  "contentSize": 4096,
+  "resourceType": "stylesheet",
+  "date": "2026-08-20T20:18:00.123Z"
+}
+```
+
+Collection is capped (see [Configuration and limits](#configuration-and-limits)).
+
+---
+
+## API reference
+
+### `POST /api/check`
+
+**Runtime:** Node.js (`export const runtime = "nodejs"`).  
+**Max duration:** 60 seconds (route `maxDuration`).
+
+#### Request body
+
+```json
+{
+  "url": "https://example.com",
+  "headers": [
+    { "name": "User-Agent", "value": "MyBot/1.0" }
+  ],
+  "dnsOverride": {
+    "host": "example.com",
+    "ip": "203.0.113.10"
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string | Yes | Absolute `http` or `https` URL |
+| `headers` | `{ name, value }[]` | No | Extra headers applied to the Playwright browser context |
+| `dnsOverride` | `{ host, ip }` | No | Force Chromium to resolve `host` to `ip` (must match URL hostname; private IPs blocked) |
+
+#### Success response
+
+```json
+{
+  "finalUrl": "https://example.com/",
+  "status": 200,
+  "title": "Example Domain",
+  "html": "<!DOCTYPE html>...",
+  "screenshotBase64": "<base64 PNG>",
+  "resources": {
+    "links": [],
+    "images": [],
+    "stylesheets": [],
+    "scripts": [],
+    "iframes": [],
+    "other": []
+  },
+  "requestHeaders": [{ "name": "user-agent", "value": "..." }],
+  "responseHeaders": [{ "name": "content-type", "value": "text/html..." }],
+      "networkRequests": [
+        {
+          "url": "https://example.com/",
+          "host": "example.com",
+          "status": 200,
+          "contentType": "text/html; charset=UTF-8",
+          "contentSize": 1256,
+          "resourceType": "document",
+          "date": "2026-08-20T20:18:00.123Z"
+        }
+      ],
+  "dnsOverride": {
+    "host": "example.com",
+    "ip": "203.0.113.10"
+  },
+  "timingMs": 2100
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `finalUrl` | URL after redirects |
+| `status` | Main document HTTP status |
+| `title` | Document title |
+| `html` | Serialized DOM HTML (may be truncated; see limits) |
+| `screenshotBase64` | Full-page PNG as base64 |
+| `resources` | Deduplicated absolute URLs from the live DOM |
+| `requestHeaders` / `responseHeaders` | Main navigation headers |
+| `networkRequests` | All observed responses with `date` (ISO timestamp), URL, host, status, content type, size, type (capped; see limits) |
+| `dnsOverride` | Applied force-resolve mapping, or `null` |
+| `timingMs` | Server-side elapsed time for the check |
+| `error` | Present on failure responses |
+
+#### Error response
+
+Validation or fetch failures return JSON with `error` set and empty/default fields. Typical HTTP status:
+
+- `400` — invalid URL, blocked host, bad headers, invalid force-resolve, etc.
+- `500` — unexpected Playwright/runtime failure
+
+---
+
+## Project structure
+
+```text
+url_checker/
+├── app/
+│   ├── api/check/route.ts    # POST /api/check
+│   ├── globals.css           # UI styles
+│   ├── layout.tsx
+│   └── page.tsx              # Main UI + submit flow
+├── components/
+│   ├── ContentPreview.tsx
+│   ├── HeaderEditor.tsx
+│   ├── HeadersPanel.tsx
+│   ├── NetworkRequestsPanel.tsx
+│   ├── ResourceSummary.tsx
+│   └── UrlForm.tsx           # URL, DNS override, headers
+├── lib/
+│   ├── extract-resources.ts  # DOM URL extraction
+│   ├── network-collector.ts  # Playwright response log
+│   ├── playwright-fetch.ts   # Browser launch + capture (+ MAP args)
+│   ├── types.ts              # Shared request/response types
+│   └── validate.ts           # URL / header / DNS override guards
+├── next.config.ts            # serverExternalPackages: playwright
+├── package.json
+├── CHANGELOG.md
+└── README.md
+```
+
+---
+
+## Getting started
+
+### Prerequisites
+
+- Node.js 20+ recommended
+- npm
+- Ability to download Chromium for Playwright (network access on first install)
+
+### Install
+
+```bash
+npm install
+```
+
+This runs `postinstall` → `playwright install chromium`. If Chromium is missing later:
+
+```bash
+npx playwright install chromium
+```
+
+### Development
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Production
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build
+npm start
+```
 
-## Learn More
+### Scripts
 
-To learn more about Next.js, take a look at the following resources:
+| Script | Purpose |
+|--------|---------|
+| `npm run dev` | Next.js development server |
+| `npm run build` | Production build |
+| `npm start` | Serve production build |
+| `npm run lint` | ESLint |
+| `postinstall` | Install Playwright Chromium |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Configuration and limits
 
-## Deploy on Vercel
+Defined mainly in `lib/playwright-fetch.ts` and related libs:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| Navigation timeout | 45s | `page.goto` with `waitUntil: "load"` |
+| Network idle budget | 5s | Best-effort settle; timeout ignored |
+| Max HTML chars | 2,000,000 | Truncate oversized serialized HTML |
+| Max network entries | 2,000 | Cap collected responses |
+| Content size | Prefer `Content-Length`; else response body length when available | Shown in network table |
+| DNS override | Chromium `--host-resolver-rules=MAP host ip` | Process-wide for that browser instance |
+| API `maxDuration` | 60s | Next.js route limit |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Deploy note: the host must allow launching Chromium (sufficient RAM/CPU; often needs system libraries on Linux). Serverless platforms may need a Playwright-compatible runtime or a long-running Node server.
+
+---
+
+## Security
+
+Built-in guards (v1):
+
+- Only `http:` and `https:` schemes.
+- URLs with embedded credentials are rejected.
+- Localhost / `.local` / `.internal` hostnames blocked.
+- Private, loopback, link-local, and other reserved IPs blocked (including after DNS resolution when no override is used).
+- Dangerous hop-by-hop / override headers blocked (for example `Host`, `Connection`, `Transfer-Encoding`).
+- Header name/value length and count limits.
+- Optional DNS override must use a **public** IP and a host that **matches** the URL hostname; Node DNS lookup is skipped only when a valid override is present (prevents using MAP to reach RFC1918 addresses).
+- HTML preview uses an empty `sandbox` attribute so scripts do not execute in the UI.
+
+This is not a full multi-tenant hardening suite. Do not expose an open instance to the public internet without auth, rate limits, and further SSRF review.
+
+---
+
+## Limitations and out of scope
+
+- No authentication, user accounts, or audit log.
+- No persistent history (memory-only results).
+- One Chromium browser per request (no shared pool).
+- `networkidle` is not required for success (sites with perpetual analytics/websockets would otherwise hang).
+- Screenshot + large HTML payloads can make JSON responses heavy.
+- Sites that block headless browsers, require interactive CAPTCHAs, or depend on special client TLS may fail or look incomplete.
+- DNS override maps a single exact hostname (no multi-host or wildcard UI yet).
+- Third-party hosts are never remapped by the DNS override.
+- No PDF export or editable HTML workspace.
+
+---
+
+## Tech stack
+
+- **Next.js 16** (App Router) + **React 19** + **TypeScript**
+- **Playwright** (Chromium) for real-browser fetching
+- **Tailwind CSS v4** (via `@import "tailwindcss"`) plus custom CSS in `app/globals.css`
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a versioned list of all implementations and changes.
+
+---
+
+## License
+
+Private project (`"private": true` in `package.json`). Add a license file if you intend to distribute it.
