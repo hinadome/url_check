@@ -13,7 +13,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 3. [Architecture](#architecture) (includes [Screenshot timing](#screenshot-timing))
 4. [Force DNS resolution](#force-dns-resolution)
 5. [How content is stored](#how-content-is-stored)
-6. [User interface](#user-interface)
+6. [User interface](#user-interface) (includes [Resource summary vs Network requests](#resource-summary-vs-network-requests))
 7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only))
 8. [Export](#export)
 9. [Deployment (Vercel / Netlify)](#deployment-vercel--netlify) — prefer VM/container: [DEPLOYMENT.md](DEPLOYMENT.md)
@@ -211,6 +211,25 @@ Layout (top to bottom after a successful check):
    - **HTML** — sandboxed iframe (`sandbox=""`, `srcDoc`) so scripts do not run in the preview.
    - **Plain text** — raw HTML source shown as text in a `<pre>` block.
 6. **Network requests** — expandable, filterable table; per-row Request / Response / Content tabs (see [Network requests panel](#network-requests-panel)).
+
+### Resource summary vs Network requests
+
+The **unique URLs** count on Resource summary and the **responses** count on Network requests measure different things and often will not match.
+
+| | **Resource summary** | **Network requests** |
+|--|----------------------|----------------------|
+| Source | Final DOM after load (`lib/extract-resources.ts`) | Playwright `response` events during the check (`lib/network-collector.ts`) |
+| What is counted | URLs from attributes such as `a[href]`, `img[src]` / `srcset`, stylesheets, scripts, iframes, and a few other tags | One row per HTTP **response** the browser received |
+| Deduping | Unique **per category** (the same URL in links and images counts twice toward the total) | Not unique by URL — the same URL can appear more than once |
+| Skips | `data:` and `javascript:` URLs | N/A (only actual network responses) |
+| Typically includes | Link targets that were never fetched | Document, XHR/fetch, fonts, redirects, beacons, third-party calls, etc. |
+| Typically excludes | XHR/fetch, CSS-only fonts, redirects, WebSockets, analytics that never appear as DOM attributes | Plain `<a href>` links that were never requested |
+| Cap | None beyond what is in the DOM | Soft cap of ~2,000 entries |
+
+**Why one side can be higher:**
+
+- **Resource summary higher** — many unclicked `<a href>` (and similar) URLs in the DOM that the browser never requested.
+- **Network higher** — JS/API traffic, redirects, duplicate fetches, fonts loaded only via CSS, third-party calls, and other responses that never show up as extractable DOM attributes.
 
 Components live under `components/`:
 
@@ -634,6 +653,7 @@ This is not a full multi-tenant hardening suite. Do not expose an open instance 
 - Third-party hosts are never remapped by the DNS override.
 - Export is client-side only (no server archive store); Network CSV is a metadata index (no header/body cells); HAR not included in v1.
 - No PDF export or editable HTML workspace.
+- Resource summary unique-URL totals are not expected to equal Network request row counts (different sources; see [Resource summary vs Network requests](#resource-summary-vs-network-requests)).
 
 ---
 
