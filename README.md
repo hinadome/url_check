@@ -10,7 +10,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 
 1. [Overview](#overview)
 2. [Features](#features)
-3. [Architecture](#architecture)
+3. [Architecture](#architecture) (includes [Screenshot timing](#screenshot-timing))
 4. [Force DNS resolution](#force-dns-resolution)
 5. [How content is stored](#how-content-is-stored)
 6. [User interface](#user-interface)
@@ -85,14 +85,24 @@ JSON response → React state → UI panels
    - Validates optional `dnsOverride` (public IP; host must match URL hostname).
    - When a valid override is present, **skips Node DNS lookup** for the URL host (traffic will use the forced IP in Chromium).
 3. **Fetch** — `lib/playwright-fetch.ts` launches Chromium per request (with host-resolver args when overriding), applies `extraHTTPHeaders`, navigates with `waitUntil: "load"`, then optionally waits up to a few seconds for `networkidle` (timeout ignored so busy sites still succeed).
-4. **Capture**
-   - Main document headers via Playwright `allHeaders()`
-   - HTML via `page.content()`
-   - Screenshot via `page.screenshot({ fullPage: true })`
-   - Resources via in-page DOM evaluation (`lib/extract-resources.ts`)
-   - Network responses via a page `response` listener (`lib/network-collector.ts`)
+4. **Capture** (in this order, after navigation + settle):
+   1. Main document headers via Playwright `allHeaders()`
+   2. `finalUrl`, `title`, then HTML via `page.content()`
+   3. **Screenshot** via `page.screenshot({ fullPage: true, type: "png" })`
+   4. DOM resource extraction (`lib/extract-resources.ts`)
+   5. Flush network log (`lib/network-collector.ts`; responses were collected throughout the load via a `response` listener)
 5. **Respond** — JSON returned to the client (includes `dnsOverride` used, or `null`); browser and in-memory server objects are discarded when the handler finishes.
 6. **Render** — Client stores the payload in React state and renders panels.
+
+### Screenshot timing
+
+The full-page screenshot is **not** taken at navigation start. It runs in `lib/playwright-fetch.ts` only after:
+
+1. `page.goto(url, { waitUntil: "load" })` completes (window `load`, timeout 45s), and
+2. A best-effort `waitForLoadState("networkidle")` finishes or times out (budget 5s; failure is ignored), and
+3. Main-document headers, title, and HTML have already been read.
+
+So the PNG reflects the page **after load (+ optional idle settle)**, at roughly the same DOM state as the captured HTML. Resource extraction runs **after** the screenshot. There is no separate screenshot timestamp in the API—only overall `timingMs` for the whole check.
 
 Chromium is installed automatically on `npm install` via the `postinstall` script (`playwright install chromium`). Playwright is marked as a server external package in `next.config.ts`.
 
@@ -194,7 +204,7 @@ Layout (top to bottom after a successful check):
 3. **HTTP headers** — request headers and response headers (main document) in side-by-side tables.
 4. **Resource summary** — collapsible lists of URLs found in the rendered DOM.
 5. **Full content**
-   - **Screenshot** — full-page PNG (`data:image/png;base64,...`).
+   - **Screenshot** — full-page PNG (`data:image/png;base64,...`), captured after `load` (+ optional `networkidle` settle) and after HTML is read (see [Screenshot timing](#screenshot-timing)).
    - **HTML** — sandboxed iframe (`sandbox=""`, `srcDoc`) so scripts do not run in the preview.
    - **Plain text** — raw HTML source shown as text in a `<pre>` block.
 6. **Network requests** — expandable, filterable table of all responses (see [Network requests panel](#network-requests-panel)).

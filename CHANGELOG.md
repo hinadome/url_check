@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - `README.md` — [Network requests panel](README.md#network-requests-panel) documents columns, expand/breakout width, **filters** (controls, AND logic, remount reset), and API entry shape.
+- `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.
 
 ---
 
