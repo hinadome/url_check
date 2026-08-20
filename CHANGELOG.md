@@ -22,8 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Empty-filter message when nothing matches
   - Filters combine with AND; panel remounts on each new check (`key` on `app/page.tsx`) so controls reset
 - Per-network-entry **request headers** and **response headers** (expand row; tabbed view)
-- Shared **`HeadersTabs`** component for Request / Response header switching (`components/HeadersTabs.tsx`)
-- Main **HTTP headers** panel uses the same tab UI
+- Network row **Content** tab (`lib/network-collector.ts` + `HeadersTabs`):
+  - `bodyEncoding: "text"` → plain-text body (Full content–style `<pre>`)
+  - `bodyEncoding: "base64"` → binary body as base64 (with note)
+  - `bodyEncoding: "empty"` → Content tab shows nothing
+  - Fields: `body`, `bodyEncoding`, `bodyTruncated`; capture cap ~512KB
+  - Binary detection via content-type heuristics and null-byte sampling
+- Shared **`HeadersTabs`** for Request / Response / Content (`components/HeadersTabs.tsx`)
+- Main **HTTP headers** panel uses Request / Response only (no Content tab)
 
 ### Changed
 
@@ -35,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- `README.md` — [Network requests panel](README.md#network-requests-panel) / [Headers display (tabs)](README.md#headers-display-tabs) cover columns, filters, tabbed headers, name/value layout, and list-stability behavior.
+- `README.md` — [Network requests panel](README.md#network-requests-panel), [Headers display (tabs)](README.md#headers-display-tabs), and [Content tab](README.md#content-tab-network-rows-only) document columns, filters, tabbed headers, body encoding rules, and list-stability behavior.
 - `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.
 
 ---

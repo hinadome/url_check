@@ -1,13 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import type { HeaderPair } from "@/lib/types";
+import type { HeaderPair, NetworkBodyEncoding } from "@/lib/types";
 
-export type HeaderTab = "request" | "response";
+export type HeaderTab = "request" | "response" | "content";
 
 type HeadersTabsProps = {
   requestHeaders: HeaderPair[];
   responseHeaders: HeaderPair[];
+  /** When set, shows a Content tab (network rows). */
+  bodyEncoding?: NetworkBodyEncoding;
+  body?: string;
+  bodyTruncated?: boolean;
   /** Defaults to response (usually what people inspect first). */
   defaultTab?: HeaderTab;
   className?: string;
@@ -39,16 +43,56 @@ function HeaderTable({ headers }: { headers: HeaderPair[] }) {
   );
 }
 
+function ContentPanel({
+  bodyEncoding,
+  body,
+  bodyTruncated,
+}: {
+  bodyEncoding: NetworkBodyEncoding;
+  body: string;
+  bodyTruncated: boolean;
+}) {
+  if (bodyEncoding === "empty" || !body) {
+    return null;
+  }
+
+  return (
+    <div className="network-body-panel">
+      {bodyEncoding === "base64" && (
+        <p className="muted network-body-meta">Binary content shown as base64.</p>
+      )}
+      {bodyTruncated && (
+        <p className="muted network-body-meta">
+          Content truncated to the capture size limit.
+        </p>
+      )}
+      <pre className="plaintext-content network-body-content">{body}</pre>
+    </div>
+  );
+}
+
 export function HeadersTabs({
   requestHeaders,
   responseHeaders,
+  bodyEncoding,
+  body = "",
+  bodyTruncated = false,
   defaultTab = "response",
   className,
   tableMaxHeightClass = "headers-table-wrap",
 }: HeadersTabsProps) {
-  const [tab, setTab] = useState<HeaderTab>(defaultTab);
+  const showContentTab = bodyEncoding !== undefined;
+  const initialTab =
+    defaultTab === "content" && !showContentTab ? "response" : defaultTab;
+  const [tab, setTab] = useState<HeaderTab>(initialTab);
+
   const activeHeaders = tab === "request" ? requestHeaders : responseHeaders;
-  const activeLabel = tab === "request" ? "Request headers" : "Response headers";
+  const activeLabel =
+    tab === "request"
+      ? "Request headers"
+      : tab === "response"
+        ? "Response headers"
+        : "Content";
 
   return (
     <div className={className ? `headers-tabs ${className}` : "headers-tabs"}>
@@ -71,6 +115,22 @@ export function HeadersTabs({
         >
           Response headers ({responseHeaders.length})
         </button>
+        {showContentTab && (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "content"}
+            className={tab === "content" ? "tab active" : "tab"}
+            onClick={() => setTab("content")}
+          >
+            Content
+            {bodyEncoding === "base64"
+              ? " (base64)"
+              : bodyEncoding === "text"
+                ? " (text)"
+                : ""}
+          </button>
+        )}
       </div>
 
       <div
@@ -78,9 +138,17 @@ export function HeadersTabs({
         role="tabpanel"
         aria-label={activeLabel}
       >
-        <div className={tableMaxHeightClass}>
-          <HeaderTable headers={activeHeaders} />
-        </div>
+        {tab === "content" && showContentTab ? (
+          <ContentPanel
+            bodyEncoding={bodyEncoding}
+            body={body}
+            bodyTruncated={bodyTruncated}
+          />
+        ) : (
+          <div className={tableMaxHeightClass}>
+            <HeaderTable headers={activeHeaders} />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -14,7 +14,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 4. [Force DNS resolution](#force-dns-resolution)
 5. [How content is stored](#how-content-is-stored)
 6. [User interface](#user-interface)
-7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs))
+7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only))
 8. [API reference](#api-reference)
 9. [Project structure](#project-structure)
 10. [Getting started](#getting-started)
@@ -57,7 +57,7 @@ Typical uses:
 | HTTP headers | Main-document request/response headers via **Request** / **Response** tabs |
 | Resource summary | Links, images, stylesheets, scripts, iframes, other URLs from the live DOM |
 | Full content | Screenshot, sandboxed HTML preview, plain-text HTML source |
-| Network log | Date-stamped, filterable table of Playwright responses; expandable width |
+| Network log | Date-stamped, filterable table; expandable rows with Request/Response/Content tabs |
 
 ---
 
@@ -207,7 +207,7 @@ Layout (top to bottom after a successful check):
    - **Screenshot** — full-page PNG (`data:image/png;base64,...`), captured after `load` (+ optional `networkidle` settle) and after HTML is read (see [Screenshot timing](#screenshot-timing)).
    - **HTML** — sandboxed iframe (`sandbox=""`, `srcDoc`) so scripts do not run in the preview.
    - **Plain text** — raw HTML source shown as text in a `<pre>` block.
-6. **Network requests** — expandable, filterable table of all responses (see [Network requests panel](#network-requests-panel)).
+6. **Network requests** — expandable, filterable table; per-row Request / Response / Content tabs (see [Network requests panel](#network-requests-panel)).
 
 Components live under `components/`:
 
@@ -215,7 +215,7 @@ Components live under `components/`:
 - `HeadersPanel.tsx` / `HeadersTabs.tsx` — main-document headers (Request / Response tabs)
 - `ResourceSummary.tsx` — DOM resource lists
 - `ContentPreview.tsx` — screenshot / HTML / plain text tabs
-- `NetworkRequestsPanel.tsx` — network table (date, expand width, filters, per-row header tabs)
+- `NetworkRequestsPanel.tsx` — network table (date, expand width, filters, per-row Request/Response/Content tabs)
 
 ---
 
@@ -235,7 +235,7 @@ The network log is built from Playwright `response` events during the check (`li
 | **Content size** | `contentSize` | From `Content-Length` when present, otherwise response body length when available |
 | **Type** | `resourceType` | Playwright resource type (`document`, `script`, `stylesheet`, etc.) |
 
-Expand a row (▸), then use **Request headers** / **Response headers** tabs for a full-width header table (default: **Response**).
+Expand a row (▸), then use **Request headers** / **Response headers** / **Content** tabs (default: **Response**).
 
 ### Headers display (tabs)
 
@@ -243,19 +243,45 @@ Shared UI: `components/HeadersTabs.tsx` (used by the main **HTTP headers** panel
 
 | Behavior | Detail |
 |----------|--------|
-| Tabs | **Request headers** / **Response headers** (counts in the tab labels) |
+| Tabs | **Request headers** / **Response headers**; network rows also get **Content** |
 | Default tab | Response |
 | Layout | One full-width name/value table at a time (not side-by-side) |
 | Name column | Fixed ~12rem (14rem when the network panel is width-expanded); ellipsis on long names so keys stay next to values |
 | Value column | Remaining width; long values wrap |
-| Network list stability | Parent network table uses `table-layout: fixed`; expanded header content is width-contained so opening Response headers does **not** reflow/widen the list columns above |
+| Network list stability | Parent network table uses `table-layout: fixed`; expanded panels are width-contained so opening tabs does **not** reflow/widen the list columns above |
+
+### Content tab (network rows only)
+
+Captured in `lib/network-collector.ts` from each Playwright response body and shown via the **Content** tab in `HeadersTabs`.
+
+| `bodyEncoding` | UI behavior |
+|----------------|-------------|
+| `text` | Body shown as plain text (`<pre>`, same style as Full content → Plain text) |
+| `base64` | Body shown as a base64 string; label notes “Binary content shown as base64” |
+| `empty` | Tab is available but the panel shows **nothing** (no placeholder message) |
+
+**Binary vs text (summary):**
+
+- Treated as **text**: `text/*`, JSON, XML, JavaScript, SVG/XHTML, `application/x-www-form-urlencoded`, etc.
+- Treated as **binary**: `image/*`, `audio/*`, `video/*`, `font/*`, `application/octet-stream`, PDF, zip/wasm/protobuf/office types, or any body sample containing a null byte.
+- Unknown types default to text unless a null byte is found.
+
+**Fields on each `networkRequests[]` entry:**
+
+| Field | Meaning |
+|-------|---------|
+| `bodyEncoding` | `text` \| `base64` \| `empty` |
+| `body` | UTF-8 text, base64 string, or `""` |
+| `bodyTruncated` | `true` if the body exceeded the capture cap (~512KB) |
+
+The main document **HTTP headers** panel does **not** include a Content tab.
 
 ### Width and layout
 
 - The panel **breaks out** of the main 960px form column so the table has more horizontal room (up to about `90rem`, or nearly full viewport when expanded).
 - **Expand width** / **Collapse width** toggles near-full-viewport width for long URL lists.
-- Table uses **auto layout** with per-column `min-width` values (not a squeezed fixed layout), so columns do not overlap.
-- The table wrapper scrolls vertically and horizontally when content exceeds the panel.
+- Table uses **`table-layout: fixed`** with stable column widths so expanding a row does not reshape the list.
+- The table wrapper scrolls vertically (and horizontally if needed) when content exceeds the panel.
 
 ### Filters
 
@@ -292,7 +318,10 @@ Each `networkRequests[]` entry includes:
   "resourceType": "stylesheet",
   "date": "2026-08-20T20:18:00.123Z",
   "requestHeaders": [{ "name": "accept", "value": "*/*" }],
-  "responseHeaders": [{ "name": "content-type", "value": "text/css" }]
+  "responseHeaders": [{ "name": "content-type", "value": "text/css" }],
+  "bodyEncoding": "text",
+  "body": "body { margin: 0; }",
+  "bodyTruncated": false
 }
 ```
 
@@ -375,7 +404,7 @@ Collection is capped (see [Configuration and limits](#configuration-and-limits))
 | `screenshotBase64` | Full-page PNG as base64 |
 | `resources` | Deduplicated absolute URLs from the live DOM |
 | `requestHeaders` / `responseHeaders` | Main navigation headers |
-| `networkRequests` | All observed responses with `date`, URL, host, status, content type, size, type, plus per-entry `requestHeaders` / `responseHeaders` (capped; see limits) |
+| `networkRequests` | Observed responses with date, URL, host, status, content type/size/type, per-entry headers, and `body` / `bodyEncoding` / `bodyTruncated` for the Content tab (capped; see limits) |
 | `dnsOverride` | Applied force-resolve mapping, or `null` |
 | `timingMs` | Server-side elapsed time for the check |
 | `error` | Present on failure responses |
@@ -477,6 +506,7 @@ Defined mainly in `lib/playwright-fetch.ts` and related libs:
 | Network idle budget | 5s | Best-effort settle; timeout ignored |
 | Max HTML chars | 2,000,000 | Truncate oversized serialized HTML |
 | Max network entries | 2,000 | Cap collected responses |
+| Max network body bytes | 512,000 | Per-response body capture for Content tab (text or base64); truncated beyond this |
 | Content size | Prefer `Content-Length`; else response body length when available | Shown in network table |
 | DNS override | Chromium `--host-resolver-rules=MAP host ip` | Process-wide for that browser instance |
 | API `maxDuration` | 60s | Next.js route limit |

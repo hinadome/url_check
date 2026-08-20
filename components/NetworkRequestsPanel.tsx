@@ -110,7 +110,7 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
             All URLs requested by Playwright while loading the page. Showing{" "}
             {filtered.length} of {requests.length} responses
             {hasActiveFilters ? " (filtered)" : ""}. Expand a row, then use tabs for
-            request or response headers.
+            request or response headers, or response content.
           </p>
         </div>
         <button
@@ -305,6 +305,9 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
                                   key={key}
                                   requestHeaders={reqHeaders}
                                   responseHeaders={resHeaders}
+                                  bodyEncoding={req.bodyEncoding ?? "empty"}
+                                  body={req.body ?? ""}
+                                  bodyTruncated={req.bodyTruncated ?? false}
                                   defaultTab="response"
                                   tableMaxHeightClass="network-headers-table-wrap"
                                 />

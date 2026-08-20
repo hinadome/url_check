@@ -602,12 +602,21 @@ a:hover {
   overflow: hidden;
 }
 
-.network-detail {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+.network-body-panel {
   max-width: 100%;
   min-width: 0;
-  box-sizing: border-box;
+}
+
+.network-body-meta {
+  margin: 0 0 0.5rem;
+}
+
+.network-body-content {
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
 }
 
 .network-headers-table-wrap {

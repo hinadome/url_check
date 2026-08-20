@@ -23,6 +23,8 @@ export type ResourceSummaryData = {
   other: string[];
 };
 
+export type NetworkBodyEncoding = "text" | "base64" | "empty";
+
 export type NetworkRequestEntry = {
   url: string;
   host: string;
@@ -34,6 +36,12 @@ export type NetworkRequestEntry = {
   date: string;
   requestHeaders: HeaderPair[];
   responseHeaders: HeaderPair[];
+  /** How `body` should be interpreted in the Content tab */
+  bodyEncoding: NetworkBodyEncoding;
+  /** Plain text, base64 string, or empty when no body */
+  body: string;
+  /** True when body was truncated to the capture size limit */
+  bodyTruncated: boolean;
 };
 
 export type CheckResponse = {
