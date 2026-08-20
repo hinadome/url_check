@@ -328,14 +328,23 @@ a:hover {
   gap: 1rem;
 }
 
-.headers-block h3 {
-  margin: 0 0 0.5rem;
-  font-size: 0.95rem;
-  font-weight: 600;
+.headers-tabs {
+  margin-top: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.headers-tablist {
+  flex-wrap: wrap;
+}
+
+.headers-tab-panel {
+  min-width: 0;
 }
 
 .headers-table-wrap {
-  max-height: 280px;
+  max-height: 320px;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -374,14 +383,22 @@ a:hover {
 }
 
 .header-name {
+  width: 1%;
+  max-width: 22rem;
   white-space: nowrap;
   font-weight: 550;
-  width: 32%;
+  padding-right: 1rem;
+  vertical-align: top;
 }
 
 .header-value {
   word-break: break-word;
   color: var(--foreground);
+}
+
+.headers-table th:first-child {
+  width: 1%;
+  white-space: nowrap;
 }
 
 .resource-categories {
@@ -505,11 +522,10 @@ a:hover {
 }
 
 .network-table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  table-layout: auto;
+  table-layout: fixed;
   font-size: 0.8rem;
 }
 
@@ -539,46 +555,123 @@ a:hover {
   border-bottom: 0;
 }
 
-.network-table .col-date,
-.network-date {
-  min-width: 12rem;
+.network-table .col-toggle,
+.network-toggle {
+  width: 2.75rem;
+  text-align: center;
+}
+
+.network-table .col-date {
+  width: 11rem;
+}
+
+.network-table .col-host {
+  width: 9rem;
+}
+
+.network-table .col-status {
+  width: 4.5rem;
+}
+
+.network-table .col-ctype {
+  width: 8rem;
+}
+
+.network-table .col-size {
+  width: 5.5rem;
+}
+
+.network-table .col-type {
+  width: 5.5rem;
+}
+
+.network-toggle-btn {
+  padding: 0.2rem 0.45rem;
+  min-width: 2rem;
+  line-height: 1;
+}
+
+.network-row-open td {
+  background: #eef2f6;
+}
+
+/* Isolate expanded headers so they cannot widen the list columns */
+.network-detail-row > td {
+  background: #f3f5f7;
+  padding: 0.75rem;
+  overflow: hidden;
+}
+
+.network-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.network-headers-table-wrap {
+  max-height: 300px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.network-headers-table-wrap .headers-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+.network-headers-table-wrap .headers-table th,
+.network-headers-table-wrap .headers-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.4rem 0.55rem;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+}
+
+.network-headers-table-wrap .headers-table th {
+  position: sticky;
+  top: 0;
+  background: #f6f8fa;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.network-headers-table-wrap .headers-table th:first-child,
+.network-headers-table-wrap .header-name {
+  width: 12rem;
+  max-width: 12rem;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 0.75rem;
 }
 
-.network-table .col-url,
-.network-url {
-  min-width: 28rem;
-  max-width: 48rem;
+.network-headers-table-wrap .header-value {
+  width: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
-.network-table .col-host,
-.network-host {
-  min-width: 10rem;
-  max-width: 16rem;
-}
-
-.network-table .col-status,
-.network-status {
-  min-width: 4.5rem;
-  white-space: nowrap;
-}
-
-.network-table .col-ctype,
-.network-ctype {
-  min-width: 9rem;
-  max-width: 14rem;
-}
-
-.network-table .col-size,
-.network-size {
-  min-width: 6rem;
-  white-space: nowrap;
-}
-
-.network-table .col-type,
+.network-date,
+.network-status,
+.network-size,
 .network-type {
-  min-width: 6rem;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .network-date {
@@ -595,6 +688,7 @@ a:hover {
 }
 
 .network-url {
+  overflow: hidden;
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 0.75rem;
 }
@@ -606,8 +700,22 @@ a:hover {
   white-space: normal;
 }
 
-.network-requests--expanded .network-url {
-  max-width: 72rem;
+.network-requests--expanded .network-headers-table-wrap .headers-table th:first-child,
+.network-requests--expanded .network-headers-table-wrap .header-name {
+  width: 14rem;
+  max-width: 14rem;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 @media (max-width: 640px) {

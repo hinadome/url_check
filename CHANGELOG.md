@@ -21,16 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Subtitle **Showing N of M responses (filtered)**
   - Empty-filter message when nothing matches
   - Filters combine with AND; panel remounts on each new check (`key` on `app/page.tsx`) so controls reset
+- Per-network-entry **request headers** and **response headers** (expand row; tabbed view)
+- Shared **`HeadersTabs`** component for Request / Response header switching (`components/HeadersTabs.tsx`)
+- Main **HTTP headers** panel uses the same tab UI
 
 ### Changed
 
-- Network table layout switched from cramped `table-layout: fixed` to **auto layout** with column `min-width` / `max-width` rules to stop columns overlapping.
+- Header viewing UX: replaced side-by-side request/response tables with **Request** / **Response** tabs (full-width table per tab; default Response).
+- Header **name** column sizing tightened (~12rem fixed in network detail) so keys are not far from values on wide panels.
+- Network list uses **`table-layout: fixed`** again; expanded header panels are width-contained (`minmax(0, 1fr)` + overflow) so opening Response headers no longer breaks/widens the list columns above.
 - URL cells wrap with `overflow-wrap`; host and content-type use ellipsis; date and short columns stay nowrap.
 - Horizontal + vertical scroll on the network table wrapper when content overflows.
 
 ### Documentation
 
-- `README.md` — [Network requests panel](README.md#network-requests-panel) documents columns, expand/breakout width, **filters** (controls, AND logic, remount reset), and API entry shape.
+- `README.md` — [Network requests panel](README.md#network-requests-panel) / [Headers display (tabs)](README.md#headers-display-tabs) cover columns, filters, tabbed headers, name/value layout, and list-stability behavior.
 - `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.
 
 ---

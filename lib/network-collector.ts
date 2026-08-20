@@ -1,5 +1,5 @@
 import type { Page, Response } from "playwright";
-import type { NetworkRequestEntry } from "./types";
+import type { HeaderPair, NetworkRequestEntry } from "./types";
 
 const MAX_NETWORK_ENTRIES = 2_000;
 
@@ -9,6 +9,12 @@ function hostFromUrl(url: string): string {
   } catch {
     return "";
   }
+}
+
+function toHeaderPairs(headers: Record<string, string>): HeaderPair[] {
+  return Object.entries(headers)
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 async function resolveContentSize(
@@ -45,9 +51,12 @@ export function attachNetworkCollector(page: Page): {
         try {
           const observedAt = new Date().toISOString();
           const url = response.url();
-          const headers = await response.allHeaders();
-          const contentType = headers["content-type"] ?? "";
-          const contentSize = await resolveContentSize(response, headers);
+          const [responseHeaderMap, requestHeaderMap] = await Promise.all([
+            response.allHeaders(),
+            response.request().allHeaders(),
+          ]);
+          const contentType = responseHeaderMap["content-type"] ?? "";
+          const contentSize = await resolveContentSize(response, responseHeaderMap);
 
           entries.push({
             url,
@@ -57,6 +66,8 @@ export function attachNetworkCollector(page: Page): {
             contentSize,
             resourceType: response.request().resourceType(),
             date: observedAt,
+            requestHeaders: toHeaderPairs(requestHeaderMap),
+            responseHeaders: toHeaderPairs(responseHeaderMap),
           });
         } catch {
           // Ignore individual response collection failures.

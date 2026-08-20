@@ -14,7 +14,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 4. [Force DNS resolution](#force-dns-resolution)
 5. [How content is stored](#how-content-is-stored)
 6. [User interface](#user-interface)
-7. [Network requests panel](#network-requests-panel)
+7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs))
 8. [API reference](#api-reference)
 9. [Project structure](#project-structure)
 10. [Getting started](#getting-started)
@@ -54,7 +54,7 @@ Typical uses:
 | Custom headers | Add/remove name–value pairs sent with the Playwright request context |
 | Force DNS | Optional hostname → IP map via Chromium `--host-resolver-rules` |
 | Status / meta | Final URL, HTTP status, timing, applied DNS override |
-| HTTP headers | Main-document request and response headers |
+| HTTP headers | Main-document request/response headers via **Request** / **Response** tabs |
 | Resource summary | Links, images, stylesheets, scripts, iframes, other URLs from the live DOM |
 | Full content | Screenshot, sandboxed HTML preview, plain-text HTML source |
 | Network log | Date-stamped, filterable table of Playwright responses; expandable width |
@@ -201,7 +201,7 @@ Layout (top to bottom after a successful check):
 
 1. **Form** — URL, optional force DNS (host + IP), custom header editor, submit.
 2. **Meta** — status, final URL, timing, DNS override (when used).
-3. **HTTP headers** — request headers and response headers (main document) in side-by-side tables.
+3. **HTTP headers** — main-document headers with **Request** / **Response** tabs (full-width table per tab).
 4. **Resource summary** — collapsible lists of URLs found in the rendered DOM.
 5. **Full content**
    - **Screenshot** — full-page PNG (`data:image/png;base64,...`), captured after `load` (+ optional `networkidle` settle) and after HTML is read (see [Screenshot timing](#screenshot-timing)).
@@ -212,10 +212,10 @@ Layout (top to bottom after a successful check):
 Components live under `components/`:
 
 - `UrlForm.tsx` / `HeaderEditor.tsx` — input (including DNS override)
-- `HeadersPanel.tsx` — main-document headers
+- `HeadersPanel.tsx` / `HeadersTabs.tsx` — main-document headers (Request / Response tabs)
 - `ResourceSummary.tsx` — DOM resource lists
 - `ContentPreview.tsx` — screenshot / HTML / plain text tabs
-- `NetworkRequestsPanel.tsx` — network table (date, expand width, filters)
+- `NetworkRequestsPanel.tsx` — network table (date, expand width, filters, per-row header tabs)
 
 ---
 
@@ -234,6 +234,21 @@ The network log is built from Playwright `response` events during the check (`li
 | **Content type** | `contentType` | MIME type (parameters after `;` hidden in the cell) |
 | **Content size** | `contentSize` | From `Content-Length` when present, otherwise response body length when available |
 | **Type** | `resourceType` | Playwright resource type (`document`, `script`, `stylesheet`, etc.) |
+
+Expand a row (▸), then use **Request headers** / **Response headers** tabs for a full-width header table (default: **Response**).
+
+### Headers display (tabs)
+
+Shared UI: `components/HeadersTabs.tsx` (used by the main **HTTP headers** panel and each expanded network row).
+
+| Behavior | Detail |
+|----------|--------|
+| Tabs | **Request headers** / **Response headers** (counts in the tab labels) |
+| Default tab | Response |
+| Layout | One full-width name/value table at a time (not side-by-side) |
+| Name column | Fixed ~12rem (14rem when the network panel is width-expanded); ellipsis on long names so keys stay next to values |
+| Value column | Remaining width; long values wrap |
+| Network list stability | Parent network table uses `table-layout: fixed`; expanded header content is width-contained so opening Response headers does **not** reflow/widen the list columns above |
 
 ### Width and layout
 
@@ -275,7 +290,9 @@ Each `networkRequests[]` entry includes:
   "contentType": "text/css",
   "contentSize": 4096,
   "resourceType": "stylesheet",
-  "date": "2026-08-20T20:18:00.123Z"
+  "date": "2026-08-20T20:18:00.123Z",
+  "requestHeaders": [{ "name": "accept", "value": "*/*" }],
+  "responseHeaders": [{ "name": "content-type", "value": "text/css" }]
 }
 ```
 
@@ -358,7 +375,7 @@ Collection is capped (see [Configuration and limits](#configuration-and-limits))
 | `screenshotBase64` | Full-page PNG as base64 |
 | `resources` | Deduplicated absolute URLs from the live DOM |
 | `requestHeaders` / `responseHeaders` | Main navigation headers |
-| `networkRequests` | All observed responses with `date` (ISO timestamp), URL, host, status, content type, size, type (capped; see limits) |
+| `networkRequests` | All observed responses with `date`, URL, host, status, content type, size, type, plus per-entry `requestHeaders` / `responseHeaders` (capped; see limits) |
 | `dnsOverride` | Applied force-resolve mapping, or `null` |
 | `timingMs` | Server-side elapsed time for the check |
 | `error` | Present on failure responses |
@@ -385,6 +402,7 @@ url_checker/
 │   ├── ContentPreview.tsx
 │   ├── HeaderEditor.tsx
 │   ├── HeadersPanel.tsx
+│   ├── HeadersTabs.tsx       # Shared Request/Response header tabs
 │   ├── NetworkRequestsPanel.tsx
 │   ├── ResourceSummary.tsx
 │   └── UrlForm.tsx           # URL, DNS override, headers

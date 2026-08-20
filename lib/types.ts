@@ -32,6 +32,8 @@ export type NetworkRequestEntry = {
   resourceType: string;
   /** ISO-8601 timestamp when the response was observed */
   date: string;
+  requestHeaders: HeaderPair[];
+  responseHeaders: HeaderPair[];
 };
 
 export type CheckResponse = {

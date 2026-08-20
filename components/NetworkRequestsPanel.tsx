@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import { HeadersTabs } from "./HeadersTabs";
 import type { NetworkRequestEntry } from "@/lib/types";
 
 type NetworkRequestsPanelProps = {
@@ -8,6 +9,7 @@ type NetworkRequestsPanelProps = {
 };
 
 const ALL = "";
+const DETAIL_COLSPAN = 8;
 
 function formatBytes(size: number | null): string {
   if (size === null || Number.isNaN(size)) return "—";
@@ -41,8 +43,13 @@ function uniqueSorted(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
+function rowKey(req: NetworkRequestEntry, index: number): string {
+  return `${index}-${req.date}-${req.url}`;
+}
+
 export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
   const [expanded, setExpanded] = useState(false);
+  const [openRowKey, setOpenRowKey] = useState<string | null>(null);
   const [urlQuery, setUrlQuery] = useState("");
   const [hostFilter, setHostFilter] = useState(ALL);
   const [statusFilter, setStatusFilter] = useState(ALL);
@@ -86,6 +93,10 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
     setContentTypeFilter(ALL);
   };
 
+  const toggleRow = (key: string) => {
+    setOpenRowKey((current) => (current === key ? null : key));
+  };
+
   return (
     <section
       className={
@@ -98,7 +109,8 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
           <p className="muted">
             All URLs requested by Playwright while loading the page. Showing{" "}
             {filtered.length} of {requests.length} responses
-            {hasActiveFilters ? " (filtered)" : ""}.
+            {hasActiveFilters ? " (filtered)" : ""}. Expand a row, then use tabs for
+            request or response headers.
           </p>
         </div>
         <button
@@ -201,6 +213,9 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
               <table className="network-table">
                 <thead>
                   <tr>
+                    <th scope="col" className="col-toggle">
+                      <span className="sr-only">Headers</span>
+                    </th>
                     <th scope="col" className="col-date">
                       Date
                     </th>
@@ -225,32 +240,81 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.map((req, index) => (
-                    <tr key={`${index}-${req.url}-${req.date}`}>
-                      <td className="network-date" title={req.date}>
-                        {formatDate(req.date)}
-                      </td>
-                      <td className="network-url" title={req.url}>
-                        <a href={req.url} target="_blank" rel="noopener noreferrer">
-                          {req.url}
-                        </a>
-                      </td>
-                      <td className="network-host" title={req.host || undefined}>
-                        {req.host || "—"}
-                      </td>
-                      <td className="network-status">{req.status || "—"}</td>
-                      <td
-                        className="network-ctype"
-                        title={req.contentType || undefined}
-                      >
-                        {shortContentType(req.contentType)}
-                      </td>
-                      <td className="network-size">
-                        {formatBytes(req.contentSize)}
-                      </td>
-                      <td className="network-type">{req.resourceType || "—"}</td>
-                    </tr>
-                  ))}
+                  {filtered.map((req, index) => {
+                    const key = rowKey(req, index);
+                    const isOpen = openRowKey === key;
+                    const reqHeaders = req.requestHeaders ?? [];
+                    const resHeaders = req.responseHeaders ?? [];
+
+                    return (
+                      <Fragment key={key}>
+                        <tr
+                          className={
+                            isOpen ? "network-row network-row-open" : "network-row"
+                          }
+                        >
+                          <td className="network-toggle">
+                            <button
+                              type="button"
+                              className="btn btn-secondary network-toggle-btn"
+                              aria-expanded={isOpen}
+                              aria-label={
+                                isOpen
+                                  ? "Hide request and response headers"
+                                  : "Show request and response headers"
+                              }
+                              onClick={() => toggleRow(key)}
+                            >
+                              {isOpen ? "▾" : "▸"}
+                            </button>
+                          </td>
+                          <td className="network-date" title={req.date}>
+                            {formatDate(req.date)}
+                          </td>
+                          <td className="network-url" title={req.url}>
+                            <a
+                              href={req.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {req.url}
+                            </a>
+                          </td>
+                          <td className="network-host" title={req.host || undefined}>
+                            {req.host || "—"}
+                          </td>
+                          <td className="network-status">{req.status || "—"}</td>
+                          <td
+                            className="network-ctype"
+                            title={req.contentType || undefined}
+                          >
+                            {shortContentType(req.contentType)}
+                          </td>
+                          <td className="network-size">
+                            {formatBytes(req.contentSize)}
+                          </td>
+                          <td className="network-type">
+                            {req.resourceType || "—"}
+                          </td>
+                        </tr>
+                        {isOpen && (
+                          <tr className="network-detail-row">
+                            <td colSpan={DETAIL_COLSPAN}>
+                              <div className="network-detail">
+                                <HeadersTabs
+                                  key={key}
+                                  requestHeaders={reqHeaders}
+                                  responseHeaders={resHeaders}
+                                  defaultTab="response"
+                                  tableMaxHeightClass="network-headers-table-wrap"
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
