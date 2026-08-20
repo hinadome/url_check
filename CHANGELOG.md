@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Network list uses **`table-layout: fixed`** again; expanded header panels are width-contained (`minmax(0, 1fr)` + overflow) so opening Response headers no longer breaks/widens the list columns above.
 - URL cells wrap with `overflow-wrap`; host and content-type use ellipsis; date and short columns stay nowrap.
 - Horizontal + vertical scroll on the network table wrapper when content overflows.
+- Network requests **URL** column is plain text (not a link); full value still available via `title` on hover.
 
 ### Documentation
 

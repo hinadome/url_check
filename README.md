@@ -232,7 +232,7 @@ The network log is built from Playwright `response` events during the check (`li
 | Column | Source | Notes |
 |--------|--------|-------|
 | **Date** | `date` (ISO-8601) | When the response was observed on the server; shown in local time; rows sorted chronologically |
-| **URL** | `url` | Full request URL; wraps long paths; `title` attribute has the full value |
+| **URL** | `url` | Full request URL (plain text, not a link); wraps long paths; `title` has the full value |
 | **Remote host** | `host` | Host portion of the URL |
 | **Status** | `status` | HTTP status code |
 | **Content type** | `contentType` | MIME type (parameters after `;` hidden in the cell) |

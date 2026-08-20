@@ -272,13 +272,7 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
                             {formatDate(req.date)}
                           </td>
                           <td className="network-url" title={req.url}>
-                            <a
-                              href={req.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              {req.url}
-                            </a>
+                            {req.url}
                           </td>
                           <td className="network-host" title={req.host || undefined}>
                             {req.host || "—"}

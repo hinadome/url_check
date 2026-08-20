@@ -761,13 +761,10 @@ a:hover {
   overflow: hidden;
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 0.75rem;
-}
-
-.network-url a {
-  display: block;
   overflow-wrap: anywhere;
   word-break: break-word;
   white-space: normal;
+  color: var(--foreground);
 }
 
 .network-requests--expanded .network-headers-table-wrap .headers-table th:first-child,
