@@ -1,0 +1,20 @@
+# Next.js on Netlify (Open Next / Next.js Runtime)
+# https://docs.netlify.com/frameworks/next-js/overview/
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Playwright checks need a long-running Node function (see README Deployment).
+[functions]
+  node_bundler = "nft"
+  included_files = [
+    "node_modules/playwright/**",
+    "node_modules/playwright-core/**"
+  ]
+
+[functions."*"]
+  timeout = 60

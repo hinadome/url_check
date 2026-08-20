@@ -16,14 +16,15 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 6. [User interface](#user-interface)
 7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only))
 8. [Export](#export)
-9. [API reference](#api-reference)
-10. [Project structure](#project-structure)
-11. [Getting started](#getting-started)
-12. [Configuration and limits](#configuration-and-limits)
-13. [Security](#security)
-14. [Limitations and out of scope](#limitations-and-out-of-scope)
-15. [Tech stack](#tech-stack)
-16. [Changelog](#changelog)
+9. [Deployment (Vercel / Netlify)](#deployment-vercel--netlify)
+10. [API reference](#api-reference)
+11. [Project structure](#project-structure)
+12. [Getting started](#getting-started)
+13. [Configuration and limits](#configuration-and-limits)
+14. [Security](#security)
+15. [Limitations and out of scope](#limitations-and-out-of-scope)
+16. [Tech stack](#tech-stack)
+17. [Changelog](#changelog)
 
 ---
 
@@ -350,6 +351,60 @@ Filenames look like `url-checker-example.com-20260820-143005-light.json`.
 
 ---
 
+## Deployment (Vercel / Netlify)
+
+This app is **Next.js** (not TanStack/Nitro). Use each platform’s native Next.js support.
+
+| Platform | Config | Notes |
+|----------|--------|--------|
+| **Vercel** | [`vercel.json`](vercel.json) | `framework: nextjs`; `/api/check` function `maxDuration` 60s, memory 3008 MB |
+| **Netlify** | [`netlify.toml`](netlify.toml) | `@netlify/plugin-nextjs`; function timeout 60s; Playwright paths included for bundling |
+
+### Deploy commands
+
+**Vercel**
+
+```bash
+npm ci
+npm run build:vercel   # same as next build
+npx vercel             # or connect the Git repo in the Vercel dashboard
+```
+
+**Netlify**
+
+```bash
+npm ci
+npm run build:netlify  # same as next build
+npx netlify deploy --build   # or connect the Git repo in the Netlify dashboard
+```
+
+Local production:
+
+```bash
+npm run build
+npm start
+```
+
+`postinstall` runs `playwright install chromium` so browsers are present after `npm ci` when the environment allows downloads.
+
+### Playwright on serverless (important)
+
+`/api/check` launches **full Chromium** via Playwright. That works reliably on:
+
+- Local `next dev` / `next start`
+- A VPS or container with enough RAM/CPU and system deps for Chromium
+
+On **Vercel / Netlify serverless**, Chromium often fails or is unsupported (binary size, missing OS libraries, cold start, memory). Expect:
+
+- The **UI** to deploy and load
+- **`POST /api/check`** to error unless the platform can run Playwright Chromium
+
+Mitigations (not implemented in this repo yet): run the API on a long-lived Node host, use a remote browser service, or switch to a serverless-oriented browser build (e.g. `@sparticuz/chromium` + `playwright-core`) with platform-specific wiring.
+
+Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade or self-host if checks time out.
+
+---
+
 ## API reference
 
 ### `POST /api/check`
@@ -465,6 +520,8 @@ url_checker/
 │   ├── types.ts              # Shared request/response types
 │   └── validate.ts           # URL / header / DNS override guards
 ├── next.config.ts            # serverExternalPackages: playwright
+├── vercel.json               # Vercel Next.js + /api/check limits
+├── netlify.toml              # Netlify Next.js plugin + function timeout
 ├── package.json
 ├── CHANGELOG.md
 └── README.md
@@ -534,7 +591,7 @@ Defined mainly in `lib/playwright-fetch.ts` and related libs:
 | DNS override | Chromium `--host-resolver-rules=MAP host ip` | Process-wide for that browser instance |
 | API `maxDuration` | 60s | Next.js route limit |
 
-Deploy note: the host must allow launching Chromium (sufficient RAM/CPU; often needs system libraries on Linux). Serverless platforms may need a Playwright-compatible runtime or a long-running Node server.
+Deploy note: the host must allow launching Chromium (sufficient RAM/CPU; often needs system libraries on Linux). **Vercel/Netlify serverless is a poor fit for Playwright** unless you add a serverless browser strategy — prefer `next start` on a Node server for production checks. See [Deployment](#deployment-vercel--netlify).
 
 ---
 

@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:vercel": "next build",
+    "build:netlify": "next build",
     "start": "next start",
     "lint": "eslint",
     "postinstall": "playwright install chromium"

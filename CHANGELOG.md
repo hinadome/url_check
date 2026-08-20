@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **JSON (full)** — complete payload including screenshot and bodies
   - **Screenshot (PNG)**, **HTML source**
   - **Network CSV (index)** — metadata columns only (no header maps or body content)
+- Deploy configs for **Vercel** (`vercel.json`) and **Netlify** (`netlify.toml`) with Next.js native hosting; README documents Playwright serverless limits
 
 ### Changed
 
@@ -46,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- `README.md` — [Network requests panel](README.md#network-requests-panel), [Headers display (tabs)](README.md#headers-display-tabs), [Content tab](README.md#content-tab-network-rows-only), and [Export](README.md#export) document UI and download formats.
+- `README.md` — [Network requests panel](README.md#network-requests-panel), [Headers display (tabs)](README.md#headers-display-tabs), [Content tab](README.md#content-tab-network-rows-only), [Export](README.md#export), and [Deployment](README.md#deployment-vercel--netlify).
 - `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.
 
 ---
