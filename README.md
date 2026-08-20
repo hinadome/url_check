@@ -16,7 +16,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 6. [User interface](#user-interface)
 7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only))
 8. [Export](#export)
-9. [Deployment (Vercel / Netlify)](#deployment-vercel--netlify)
+9. [Deployment (Vercel / Netlify)](#deployment-vercel--netlify) — prefer VM/container: [DEPLOYMENT.md](DEPLOYMENT.md)
 10. [API reference](#api-reference)
 11. [Project structure](#project-structure)
 12. [Getting started](#getting-started)
@@ -353,7 +353,9 @@ Filenames look like `url-checker-example.com-20260820-143005-light.json`.
 
 ## Deployment (Vercel / Netlify)
 
-This app is **Next.js** (not TanStack/Nitro). Use each platform’s native Next.js support.
+For **production Playwright checks**, use a **VM or container** instead — see **[DEPLOYMENT.md](DEPLOYMENT.md)** (`scripts/deploy-vm.sh`, `scripts/deploy-container.sh`).
+
+This app is **Next.js** (not TanStack/Nitro). Vercel/Netlify configs below are for optional UI hosting only.
 
 | Platform | Config | Notes |
 |----------|--------|--------|
@@ -519,6 +521,14 @@ url_checker/
 │   ├── playwright-fetch.ts   # Browser launch + capture (+ MAP args)
 │   ├── types.ts              # Shared request/response types
 │   └── validate.ts           # URL / header / DNS override guards
+├── scripts/
+│   ├── deploy-vm.sh          # VM install/build/systemd
+│   └── deploy-container.sh   # Docker Compose build/up
+├── deploy/
+│   └── url-checker.service   # systemd unit template
+├── Dockerfile
+├── docker-compose.yml
+├── DEPLOYMENT.md             # VM + container deploy guide
 ├── next.config.ts            # serverExternalPackages: playwright
 ├── vercel.json               # Vercel Next.js + /api/check limits
 ├── netlify.toml              # Netlify Next.js plugin + function timeout

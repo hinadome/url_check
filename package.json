@@ -9,7 +9,9 @@
     "build:netlify": "next build",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "playwright install chromium"
+    "postinstall": "playwright install chromium",
+    "deploy:vm": "bash scripts/deploy-vm.sh",
+    "deploy:container": "bash scripts/deploy-container.sh"
   },
   "dependencies": {
     "next": "16.3.1",

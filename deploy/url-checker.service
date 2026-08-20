@@ -1,0 +1,18 @@
+[Unit]
+Description=URL Checker (Next.js + Playwright)
+After=network.target
+
+[Service]
+Type=simple
+User=__APP_USER__
+WorkingDirectory=__APP_DIR__
+Environment=NODE_ENV=production
+Environment=PORT=__PORT__
+ExecStart=__NODE_BIN__ __APP_DIR__/node_modules/next/dist/bin/next start -p __PORT__
+Restart=on-failure
+RestartSec=5
+# Chromium / Playwright often need shared memory
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

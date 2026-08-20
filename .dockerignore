@@ -1,0 +1,15 @@
+.git
+.github
+.vscode
+.cursor
+.next
+node_modules
+.vercel
+.netlify
+npm-debug.log*
+Dockerfile*
+!Dockerfile
+.dockerignore
+*.md
+deploy
+scripts
