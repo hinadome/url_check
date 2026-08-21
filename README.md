@@ -14,7 +14,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 4. [Force DNS resolution](#force-dns-resolution)
 5. [How content is stored](#how-content-is-stored)
 6. [User interface](#user-interface) (includes [Resource summary vs Network requests](#resource-summary-vs-network-requests))
-7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only))
+7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only), [Timing tab](#timing-tab-network-rows-only) / [Resource timing](#resource-timing) / [Navigation timing](#navigation-timing))
 8. [Export](#export)
 9. [Deployment (Vercel / Netlify)](#deployment-vercel--netlify) — prefer VM/container: [DEPLOYMENT.md](DEPLOYMENT.md)
 10. [API reference](#api-reference)
@@ -59,7 +59,7 @@ Typical uses:
 | HTTP headers | Main-document request/response headers via **Request** / **Response** tabs |
 | Resource summary | Links, images, stylesheets, scripts, iframes, other URLs from the live DOM |
 | Full content | Screenshot, sandboxed HTML preview, plain-text HTML source |
-| Network log | Date-stamped, filterable table; expandable rows with Request/Response/Content tabs |
+| Network log | Date-stamped, filterable table with Remote IP + HTTP version; expandable rows with Request / Response / Content / Timing tabs |
 | Export | Client-side downloads: JSON (light/full), PNG, HTML, network CSV index |
 
 ---
@@ -235,10 +235,10 @@ Components live under `components/`:
 
 - `ExportMenu.tsx` — result export dropdown
 - `UrlForm.tsx` / `HeaderEditor.tsx` — input (including DNS override)
-- `HeadersPanel.tsx` / `HeadersTabs.tsx` — main-document headers (Request / Response tabs)
+- `HeadersPanel.tsx` / `HeadersTabs.tsx` — main-document headers (Request / Response); network rows also Content / Timing
 - `ResourceSummary.tsx` — DOM resource lists
 - `ContentPreview.tsx` — screenshot / HTML / plain text tabs
-- `NetworkRequestsPanel.tsx` — network table (date, expand width, filters, per-row Request/Response/Content tabs)
+- `NetworkRequestsPanel.tsx` — network table (date, remote IP, HTTP version, expand width, filters, per-row Request/Response/Content/Timing tabs)
 
 ---
 
@@ -253,12 +253,14 @@ The network log is built from Playwright `response` events during the check (`li
 | **Date** | `date` (ISO-8601) | When the response was observed on the server; shown in local time; rows sorted chronologically |
 | **URL** | `url` | Full request URL (plain text, not a link); wraps long paths; `title` has the full value |
 | **Remote host** | `host` | Host portion of the URL |
+| **Remote IP** | `remoteIp` | From Playwright `response.serverAddr()`; `—` if unavailable (`remotePort` is kept in JSON/`title`) |
 | **Status** | `status` | HTTP status code |
+| **HTTP** | `httpVersion` | From `response.httpVersion()` (e.g. `http/1.1`, `h2`) |
 | **Content type** | `contentType` | MIME type (parameters after `;` hidden in the cell) |
 | **Content size** | `contentSize` | From `Content-Length` when present, otherwise response body length when available |
 | **Type** | `resourceType` | Playwright resource type (`document`, `script`, `stylesheet`, etc.) |
 
-Expand a row (▸), then use **Request headers** / **Response headers** / **Content** tabs (default: **Response**).
+Expand a row (▸), then use **Request headers** / **Response headers** / **Content** / **Timing** tabs (default: **Response**).
 
 ### Headers display (tabs)
 
@@ -266,7 +268,7 @@ Shared UI: `components/HeadersTabs.tsx` (used by the main **HTTP headers** panel
 
 | Behavior | Detail |
 |----------|--------|
-| Tabs | **Request headers** / **Response headers**; network rows also get **Content** |
+| Tabs | **Request headers** / **Response headers**; network rows also get **Content** and **Timing** |
 | Default tab | Response |
 | Layout | One full-width name/value table at a time (not side-by-side) |
 | Name column | Fixed ~12rem (14rem when the network panel is width-expanded); ellipsis on long names so keys stay next to values |
@@ -298,6 +300,90 @@ Captured in `lib/network-collector.ts` from each Playwright response body and sh
 | `bodyTruncated` | `true` if the body exceeded the capture cap (~512KB) |
 
 The main document **HTTP headers** panel does **not** include a Content tab.
+
+### Timing tab (network rows only)
+
+Expand a network row → **Timing**.
+
+| Section | Source | When shown |
+|---------|--------|------------|
+| **Resource timing** | Playwright `request.timing()` (`timing` on each entry) | Every network row (see [Resource timing](#resource-timing)) |
+| **Navigation timing** | Page `performance.getEntriesByType('navigation')` → `navigationTiming` on the check result | Only on rows with `resourceType === "document"` |
+
+Timing details stay in **JSON** export; Network CSV includes `remoteIp` / `remotePort` / `httpVersion` but not full timing maps.
+
+#### Resource timing
+
+Each network entry’s `timing` object comes from Playwright’s [`request.timing()`](https://playwright.dev/docs/api/class-request#request-timing), which mirrors the browser [Resource Timing API](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceResourceTiming) phases for that request.
+
+**How to read the numbers**
+
+| Rule | Detail |
+|------|--------|
+| Units | Milliseconds |
+| `startTime` | Absolute timestamp (ms since Unix epoch) when the request started |
+| Other phase fields | Offsets **relative to `startTime`** (not wall-clock times) |
+| Unavailable | Playwright uses `-1`; the UI shows **—** |
+| When filled | Most phases appear once a response starts; `responseEnd` is most accurate after the request finishes (`requestfinished`) |
+
+**Phase fields (API + Timing tab)**
+
+| Field | Meaning |
+|-------|---------|
+| `startTime` | Request start (epoch ms) |
+| `domainLookupStart` | Just before DNS lookup begins |
+| `domainLookupEnd` | Just after DNS lookup finishes |
+| `connectStart` | Just before TCP connect starts |
+| `secureConnectionStart` | Just before TLS handshake starts (`-1` / — on plain HTTP or when reused) |
+| `connectEnd` | Just after the connection (and TLS, if any) is ready |
+| `requestStart` | Just before the first byte of the request is sent |
+| `responseStart` | Just after the first response byte is received (TTFB marker) |
+| `responseEnd` | Just after the last response byte is received (or connection closes) |
+
+**Derived rows in the UI** (computed for display; not separate API fields)
+
+| Label | Calculation | What it approximates |
+|-------|-------------|----------------------|
+| DNS (lookup) | `domainLookupEnd − domainLookupStart` | Name resolution time |
+| TCP connect | `connectEnd − connectStart` | Connect (+ TLS when folded into connect) |
+| TTFB (responseStart − requestStart) | `responseStart − requestStart` | Time to first byte after the request is sent |
+| Total (responseEnd − startTime) | Shown as `responseEnd` when ≥ 0 | End-to-end duration of this resource relative to request start (Playwright already stores `responseEnd` as an offset from `startTime`) |
+
+**Typical waterfall (conceptual)**
+
+```text
+startTime
+  ├─ domainLookupStart → domainLookupEnd     (DNS)
+  ├─ connectStart → [secureConnectionStart] → connectEnd   (TCP / TLS)
+  ├─ requestStart
+  ├─ responseStart                           (first byte / TTFB)
+  └─ responseEnd                             (body complete)
+```
+
+**Why some values are —**
+
+- Connection or DNS was **reused** from an earlier request (Chrome often reports `-1` for lookup/connect).
+- Request served from **cache** or a **service worker**.
+- Timing not available yet, or the response never completed cleanly.
+- Plain **HTTP** (no TLS) → `secureConnectionStart` is unavailable.
+
+Resource timing is **per network request**. It is not the same as page-level Navigation Timing (DOMContentLoaded / `load`), which appears only on the main **document** row.
+
+#### Navigation timing
+
+Captured once per check via `performance.getEntriesByType("navigation")[0]` after load settle (`lib/playwright-fetch.ts` → `navigationTiming`). Shown only when you expand a **document** row’s Timing tab.
+
+| Field | Meaning |
+|-------|---------|
+| `type` | Navigation type (e.g. `navigate`, `reload`) |
+| `redirectCount` | Number of redirects for this navigation |
+| `fetchStart` … `responseEnd` | Network phases for the main document (ms from the page time origin) |
+| `domInteractive` | DOM ready for interaction |
+| `domContentLoadedEventStart` / `End` | `DOMContentLoaded` event |
+| `domComplete` | Document load complete |
+| `loadEventStart` / `End` | Window `load` event |
+
+Unlike Resource Timing’s `startTime` (Unix epoch ms), Navigation Timing values are relative to the **page performance time origin**.
 
 ### Width and layout
 
@@ -340,6 +426,20 @@ Each `networkRequests[]` entry includes:
   "contentSize": 4096,
   "resourceType": "stylesheet",
   "date": "2026-08-20T20:18:00.123Z",
+  "remoteIp": "93.184.216.34",
+  "remotePort": 443,
+  "httpVersion": "h2",
+  "timing": {
+    "startTime": 12.0,
+    "domainLookupStart": -1,
+    "domainLookupEnd": -1,
+    "connectStart": -1,
+    "secureConnectionStart": -1,
+    "connectEnd": -1,
+    "requestStart": 0.5,
+    "responseStart": 8.0,
+    "responseEnd": 15.0
+  },
   "requestHeaders": [{ "name": "accept", "value": "*/*" }],
   "responseHeaders": [{ "name": "content-type", "value": "text/css" }],
   "bodyEncoding": "text",
@@ -358,13 +458,13 @@ After a successful check, use **Export** on the meta strip (`components/ExportMe
 
 | Menu item | File | Contents |
 |-----------|------|----------|
-| **JSON (light)** — recommended | `.json` | Full result shape; `screenshotBase64` cleared; network `body` cleared (`bodyEncoding: "empty"`). **Keeps** main + per-request headers, resources, HTML, network metadata |
-| **JSON (full)** | `.json` | Complete `CheckResponse` including screenshot base64 and network bodies |
+| **JSON (light)** — recommended | `.json` | Full result shape; `screenshotBase64` cleared; network `body` cleared (`bodyEncoding: "empty"`). **Keeps** headers, resources, HTML, network metadata including `remoteIp` / `httpVersion` / `timing`, and top-level `navigationTiming` |
+| **JSON (full)** | `.json` | Complete `CheckResponse`: screenshot base64, network bodies, **and** all timing fields (`timing` per request + `navigationTiming`) |
 | **Screenshot (PNG)** | `.png` | Decoded full-page screenshot (disabled if none) |
 | **HTML source** | `.html` | Captured HTML |
-| **Network CSV (index)** | `.csv` | Metadata rows only: `date`, `url`, `host`, `status`, `contentType`, `contentSize`, `resourceType`, `bodyEncoding`, `bodyTruncated`, `requestHeaderCount`, `responseHeaderCount` |
+| **Network CSV (index)** | `.csv` | Metadata rows only: `date`, `url`, `host`, `remoteIp`, `remotePort`, `status`, `httpVersion`, `contentType`, `contentSize`, `resourceType`, `bodyEncoding`, `bodyTruncated`, `requestHeaderCount`, `responseHeaderCount` |
 
-**Design rule:** CSV is a spreadsheet-friendly **index**. Request/response header maps and body content live in **JSON**, not CSV. HAR export is not in v1.
+**Design rule:** CSV is a spreadsheet-friendly **index**. Request/response header maps, body content, and full timing maps live in **JSON**, not CSV. HAR export is not in v1.
 
 Filenames look like `url-checker-example.com-20260820-143005-light.json`.
 
@@ -481,9 +581,42 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
           "contentType": "text/html; charset=UTF-8",
           "contentSize": 1256,
           "resourceType": "document",
-          "date": "2026-08-20T20:18:00.123Z"
+          "date": "2026-08-20T20:18:00.123Z",
+          "remoteIp": "93.184.216.34",
+          "remotePort": 443,
+          "httpVersion": "http/1.1",
+          "timing": {
+            "startTime": 0,
+            "domainLookupStart": 1.2,
+            "domainLookupEnd": 5.0,
+            "connectStart": 5.1,
+            "secureConnectionStart": 8.0,
+            "connectEnd": 25.0,
+            "requestStart": 25.1,
+            "responseStart": 40.0,
+            "responseEnd": 55.0
+          }
         }
       ],
+  "navigationTiming": {
+    "fetchStart": 0.5,
+    "domainLookupStart": 1.0,
+    "domainLookupEnd": 4.0,
+    "connectStart": 4.1,
+    "connectEnd": 20.0,
+    "secureConnectionStart": 8.0,
+    "requestStart": 20.1,
+    "responseStart": 35.0,
+    "responseEnd": 50.0,
+    "domInteractive": 80.0,
+    "domContentLoadedEventStart": 82.0,
+    "domContentLoadedEventEnd": 83.0,
+    "domComplete": 100.0,
+    "loadEventStart": 100.0,
+    "loadEventEnd": 101.0,
+    "redirectCount": 0,
+    "type": "navigate"
+  },
   "dnsOverride": {
     "host": "example.com",
     "ip": "203.0.113.10"
@@ -501,7 +634,8 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
 | `screenshotBase64` | Full-page PNG as base64 |
 | `resources` | Deduplicated absolute URLs from the live DOM |
 | `requestHeaders` / `responseHeaders` | Main navigation headers |
-| `networkRequests` | Observed responses with date, URL, host, status, content type/size/type, per-entry headers, and `body` / `bodyEncoding` / `bodyTruncated` for the Content tab (capped; see limits) |
+| `networkRequests` | Observed responses with date, URL, host, remote IP/port, HTTP version, status, content type/size/type, timing, per-entry headers, and `body` / `bodyEncoding` / `bodyTruncated` for the Content tab (capped; see limits) |
+| `navigationTiming` | Page `PerformanceNavigationTiming` snapshot, or `null` |
 | `dnsOverride` | Applied force-resolve mapping, or `null` |
 | `timingMs` | Server-side elapsed time for the check |
 | `error` | Present on failure responses |
@@ -529,22 +663,24 @@ url_checker/
 │   ├── ExportMenu.tsx
 │   ├── HeaderEditor.tsx
 │   ├── HeadersPanel.tsx
-│   ├── HeadersTabs.tsx       # Shared Request/Response/Content tabs
+│   ├── HeadersTabs.tsx       # Shared Request/Response/Content/Timing tabs
 │   ├── NetworkRequestsPanel.tsx
 │   ├── ResourceSummary.tsx
 │   └── UrlForm.tsx           # URL, DNS override, headers
 ├── lib/
 │   ├── export.ts             # Client-side export builders (JSON/PNG/HTML/CSV)
 │   ├── extract-resources.ts  # DOM URL extraction
-│   ├── network-collector.ts  # Playwright response log
-│   ├── playwright-fetch.ts   # Browser launch + capture (+ MAP args)
+│   ├── network-collector.ts  # Playwright response log (IP, HTTP version, timing)
+│   ├── playwright-fetch.ts   # Browser launch + capture (+ MAP args, navigationTiming)
 │   ├── types.ts              # Shared request/response types
 │   └── validate.ts           # URL / header / DNS override guards
 ├── scripts/
-│   ├── deploy-vm.sh          # VM install/build/systemd
-│   └── deploy-container.sh   # Docker Compose build/up
+│   ├── deploy-vm.sh          # VM install/build/systemd (optional APP_URL)
+│   └── deploy-container.sh   # Docker Compose build/up (optional APP_URL)
 ├── deploy/
 │   └── url-checker.service   # systemd unit template
+├── .github/workflows/
+│   └── deploy-vm-ssh.yml     # Manual SSH VM deploy
 ├── Dockerfile
 ├── docker-compose.yml
 ├── DEPLOYMENT.md             # VM + container deploy guide

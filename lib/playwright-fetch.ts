@@ -1,7 +1,12 @@
 import { chromium } from "playwright";
 import { extractResources } from "./extract-resources";
 import { attachNetworkCollector } from "./network-collector";
-import type { CheckResponse, DnsOverride, HeaderPair } from "./types";
+import type {
+  CheckResponse,
+  DnsOverride,
+  HeaderPair,
+  NavigationTimingSnapshot,
+} from "./types";
 
 const NAVIGATION_TIMEOUT_MS = 45_000;
 const NETWORK_IDLE_BUDGET_MS = 5_000;
@@ -20,6 +25,40 @@ function hostResolverArgs(dnsOverride: DnsOverride | null): string[] {
 
   // Chromium: MAP hostname ip — keeps URL/SNI/Host as the hostname while dialing the IP.
   return [`--host-resolver-rules=MAP ${dnsOverride.host} ${dnsOverride.ip}`];
+}
+
+async function captureNavigationTiming(
+  page: import("playwright").Page,
+): Promise<NavigationTimingSnapshot | null> {
+  try {
+    return await page.evaluate(() => {
+      const nav = performance.getEntriesByType(
+        "navigation",
+      )[0] as PerformanceNavigationTiming | undefined;
+      if (!nav) return null;
+      return {
+        fetchStart: nav.fetchStart,
+        domainLookupStart: nav.domainLookupStart,
+        domainLookupEnd: nav.domainLookupEnd,
+        connectStart: nav.connectStart,
+        connectEnd: nav.connectEnd,
+        secureConnectionStart: nav.secureConnectionStart,
+        requestStart: nav.requestStart,
+        responseStart: nav.responseStart,
+        responseEnd: nav.responseEnd,
+        domInteractive: nav.domInteractive,
+        domContentLoadedEventStart: nav.domContentLoadedEventStart,
+        domContentLoadedEventEnd: nav.domContentLoadedEventEnd,
+        domComplete: nav.domComplete,
+        loadEventStart: nav.loadEventStart,
+        loadEventEnd: nav.loadEventEnd,
+        redirectCount: nav.redirectCount,
+        type: nav.type,
+      };
+    });
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchWithPlaywright(
@@ -89,6 +128,7 @@ export async function fetchWithPlaywright(
       timeout: NAVIGATION_TIMEOUT_MS,
     });
 
+    const navigationTiming = await captureNavigationTiming(page);
     const resources = await extractResources(page);
     await network.flush();
 
@@ -102,6 +142,7 @@ export async function fetchWithPlaywright(
       requestHeaders,
       responseHeaders,
       networkRequests: network.entries,
+      navigationTiming,
       dnsOverride,
       timingMs: Date.now() - started,
     };

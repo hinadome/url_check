@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Network **Remote IP** (`remoteIp` / `remotePort` via `response.serverAddr()`) and **HTTP** (`httpVersion` via `response.httpVersion()`) columns.
+- Network row **Timing** tab: per-request Resource Timing (`request.timing()` → `timing`) plus page **Navigation Timing** on document rows (`navigationTiming` on the check result).
 - **Date** column on Network requests (`date` ISO timestamp when each response was observed; rows sorted chronologically).
 - Network requests panel **Expand width** / **Collapse width** control for near-full viewport width.
 - Network panel default layout **breaks out** of the main form column (wider than 960px) so the table has room to breathe.
@@ -28,16 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `bodyEncoding: "empty"` → Content tab shows nothing
   - Fields: `body`, `bodyEncoding`, `bodyTruncated`; capture cap ~512KB
   - Binary detection via content-type heuristics and null-byte sampling
-- Shared **`HeadersTabs`** for Request / Response / Content (`components/HeadersTabs.tsx`)
-- Main **HTTP headers** panel uses Request / Response only (no Content tab)
+- Shared **`HeadersTabs`** for Request / Response / Content / Timing (`components/HeadersTabs.tsx`)
+- Main **HTTP headers** panel uses Request / Response only (no Content or Timing tab)
 - **Export** menu on the results meta strip (`components/ExportMenu.tsx`, `lib/export.ts`):
-  - **JSON (light)** — recommended; keeps headers/HTML/network metadata; strips screenshot + network bodies
-  - **JSON (full)** — complete payload including screenshot and bodies
+  - **JSON (light)** — recommended; strips screenshot + network bodies; **keeps** `timing` / `navigationTiming` and other network metadata
+  - **JSON (full)** — complete payload including screenshot, bodies, and all timing fields
   - **Screenshot (PNG)**, **HTML source**
-  - **Network CSV (index)** — metadata columns only (no header maps or body content)
+  - **Network CSV (index)** — metadata columns only (includes remote IP / HTTP version; no header maps, bodies, or full timing maps)
 - Deploy configs for **Vercel** (`vercel.json`) and **Netlify** (`netlify.toml`) with Next.js native hosting; README documents Playwright serverless limits
 - **VM** and **container** deploy scripts plus [`DEPLOYMENT.md`](DEPLOYMENT.md): `scripts/deploy-vm.sh`, `scripts/deploy-container.sh`, `Dockerfile`, `docker-compose.yml`, `deploy/url-checker.service`
-- GitHub Actions **manual** SSH VM deploy: [`.github/workflows/deploy-vm-ssh.yml`](.github/workflows/deploy-vm-ssh.yml) (`workflow_dispatch` only)
+- GitHub Actions **manual** SSH VM deploy: [`.github/workflows/deploy-vm-ssh.yml`](.github/workflows/deploy-vm-ssh.yml) (`workflow_dispatch` only); optional `VM_APP_URL` secret
 - VM deploy script avoids OOM during `npm ci` by skipping Playwright postinstall / browser download, installing Chromium separately, and optionally enabling swap on low-RAM hosts
 
 ### Changed
@@ -48,12 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - URL cells wrap with `overflow-wrap`; host and content-type use ellipsis; date and short columns stay nowrap.
 - Horizontal + vertical scroll on the network table wrapper when content overflows.
 - Network requests **URL** column is plain text (not a link); full value still available via `title` on hover.
+- Timing tab **Name** column uses a wider wrapping layout so long labels are fully visible.
 - Deploy scripts accept optional **`APP_URL`** as either `http://` or `https://`; container health probe tries local HTTP then HTTPS (and optional `APP_URL`).
 
 ### Documentation
 
-- `README.md` — [Network requests panel](README.md#network-requests-panel), [Headers display (tabs)](README.md#headers-display-tabs), [Content tab](README.md#content-tab-network-rows-only), [Export](README.md#export), and [Deployment](README.md#deployment-vercel--netlify).
-- [`DEPLOYMENT.md`](DEPLOYMENT.md) — detailed VM vs container deploy scripts and operations; manual GitHub Actions SSH deploy.
+- `README.md` — [Network requests panel](README.md#network-requests-panel), [Headers display (tabs)](README.md#headers-display-tabs), [Content tab](README.md#content-tab-network-rows-only), [Timing tab](README.md#timing-tab-network-rows-only) / [Resource timing](README.md#resource-timing) / [Navigation timing](README.md#navigation-timing), [Resource summary vs Network requests](README.md#resource-summary-vs-network-requests), [Export](README.md#export) (JSON keeps timing), and [Deployment](README.md#deployment-vercel--netlify).
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) — detailed VM vs container deploy scripts and operations; manual GitHub Actions SSH deploy; `APP_URL` / `VM_APP_URL`.
 - `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.
 
 ---

@@ -108,6 +108,7 @@ export default function Home() {
           <NetworkRequestsPanel
             key={`${result.finalUrl}-${result.timingMs}`}
             requests={result.networkRequests ?? []}
+            navigationTiming={result.navigationTiming ?? null}
           />
         </div>
       )}

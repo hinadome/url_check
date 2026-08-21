@@ -73,6 +73,7 @@ export async function POST(request: Request) {
         requestHeaders: [],
         responseHeaders: [],
         networkRequests: [],
+        navigationTiming: null,
         dnsOverride: null,
         timingMs: 0,
         error: message,

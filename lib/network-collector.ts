@@ -1,8 +1,9 @@
-import type { Page, Response } from "playwright";
+import type { Page, Request, Response } from "playwright";
 import type {
   HeaderPair,
   NetworkBodyEncoding,
   NetworkRequestEntry,
+  ResourceTiming,
 } from "./types";
 
 const MAX_NETWORK_ENTRIES = 2_000;
@@ -129,12 +130,28 @@ async function captureBody(
   };
 }
 
+function toResourceTiming(raw: ReturnType<Request["timing"]>): ResourceTiming {
+  return {
+    startTime: raw.startTime,
+    domainLookupStart: raw.domainLookupStart,
+    domainLookupEnd: raw.domainLookupEnd,
+    connectStart: raw.connectStart,
+    secureConnectionStart: raw.secureConnectionStart,
+    connectEnd: raw.connectEnd,
+    requestStart: raw.requestStart,
+    responseStart: raw.responseStart,
+    responseEnd: raw.responseEnd,
+  };
+}
+
 export function attachNetworkCollector(page: Page): {
   entries: NetworkRequestEntry[];
   flush: () => Promise<void>;
 } {
   const entries: NetworkRequestEntry[] = [];
   const pending: Promise<void>[] = [];
+  /** Map Playwright Request → entry for timing updates on requestfinished */
+  const entryByRequest = new WeakMap<Request, NetworkRequestEntry>();
 
   page.on("response", (response) => {
     if (entries.length + pending.length >= MAX_NETWORK_ENTRIES) {
@@ -146,10 +163,14 @@ export function attachNetworkCollector(page: Page): {
         try {
           const observedAt = new Date().toISOString();
           const url = response.url();
-          const [responseHeaderMap, requestHeaderMap] = await Promise.all([
-            response.allHeaders(),
-            response.request().allHeaders(),
-          ]);
+          const request = response.request();
+          const [responseHeaderMap, requestHeaderMap, serverAddr, httpVersion] =
+            await Promise.all([
+              response.allHeaders(),
+              request.allHeaders(),
+              response.serverAddr(),
+              response.httpVersion(),
+            ]);
           const contentType = responseHeaderMap["content-type"] ?? "";
           const captured = await captureBody(
             response,
@@ -157,20 +178,34 @@ export function attachNetworkCollector(page: Page): {
             responseHeaderMap["content-length"],
           );
 
-          entries.push({
+          // Prefer timing after body read; responseEnd may still update on requestfinished
+          let timing: ResourceTiming | null = null;
+          try {
+            timing = toResourceTiming(request.timing());
+          } catch {
+            timing = null;
+          }
+
+          const entry: NetworkRequestEntry = {
             url,
             host: hostFromUrl(url),
             status: response.status(),
             contentType,
             contentSize: captured.contentSize,
-            resourceType: response.request().resourceType(),
+            resourceType: request.resourceType(),
             date: observedAt,
+            remoteIp: serverAddr?.ipAddress ?? null,
+            remotePort: serverAddr?.port ?? null,
+            httpVersion: httpVersion || null,
+            timing,
             requestHeaders: toHeaderPairs(requestHeaderMap),
             responseHeaders: toHeaderPairs(responseHeaderMap),
             bodyEncoding: captured.bodyEncoding,
             body: captured.body,
             bodyTruncated: captured.bodyTruncated,
-          });
+          };
+          entries.push(entry);
+          entryByRequest.set(request, entry);
         } catch {
           // Ignore individual response collection failures.
         }
@@ -178,10 +213,22 @@ export function attachNetworkCollector(page: Page): {
     );
   });
 
+  page.on("requestfinished", (request) => {
+    const entry = entryByRequest.get(request);
+    if (!entry) return;
+    try {
+      entry.timing = toResourceTiming(request.timing());
+    } catch {
+      // keep prior timing if any
+    }
+  });
+
   return {
     entries,
     flush: async () => {
       await Promise.all(pending);
+      // Give late requestfinished handlers a tick to update responseEnd
+      await new Promise<void>((resolve) => setImmediate(resolve));
       entries.sort((a, b) => {
         const byDate = a.date.localeCompare(b.date);
         return byDate !== 0 ? byDate : a.url.localeCompare(b.url);

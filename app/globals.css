@@ -630,7 +630,15 @@ a:hover {
   width: 9rem;
 }
 
+.network-table .col-ip {
+  width: 7.5rem;
+}
+
 .network-table .col-status {
+  width: 4.5rem;
+}
+
+.network-table .col-http {
   width: 4.5rem;
 }
 
@@ -678,6 +686,90 @@ a:hover {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: #fff;
+}
+
+.network-timing-panel {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.network-timing-heading {
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.network-timing-heading:first-child {
+  margin-top: 0;
+}
+
+.network-timing-note {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+}
+
+.network-timing-note code {
+  font-size: 0.75rem;
+}
+
+.network-timing-table-wrap {
+  max-height: 300px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.network-timing-table-wrap .timing-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+.network-timing-table-wrap .timing-table th,
+.network-timing-table-wrap .timing-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.4rem 0.55rem;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+}
+
+.network-timing-table-wrap .timing-table th {
+  position: sticky;
+  top: 0;
+  background: #f6f8fa;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.network-timing-table-wrap .timing-table th:first-child,
+.network-timing-table-wrap .timing-name {
+  width: 55%;
+  max-width: none;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding-right: 0.75rem;
+}
+
+.network-timing-table-wrap .timing-value {
+  width: 45%;
+  white-space: nowrap;
+}
+
+.network-requests--expanded .network-timing-table-wrap .timing-table th:first-child,
+.network-requests--expanded .network-timing-table-wrap .timing-name {
+  width: 60%;
 }
 
 .network-headers-table-wrap {
@@ -737,8 +829,10 @@ a:hover {
 
 .network-date,
 .network-status,
+.network-http,
 .network-size,
-.network-type {
+.network-type,
+.network-ip {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -748,6 +842,12 @@ a:hover {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 0.75rem;
   color: var(--muted);
+}
+
+.network-ip,
+.network-http {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
 }
 
 .network-host,

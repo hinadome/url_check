@@ -2,14 +2,18 @@
 
 import { Fragment, useState } from "react";
 import { HeadersTabs } from "./HeadersTabs";
-import type { NetworkRequestEntry } from "@/lib/types";
+import type {
+  NavigationTimingSnapshot,
+  NetworkRequestEntry,
+} from "@/lib/types";
 
 type NetworkRequestsPanelProps = {
   requests: NetworkRequestEntry[];
+  navigationTiming?: NavigationTimingSnapshot | null;
 };
 
 const ALL = "";
-const DETAIL_COLSPAN = 8;
+const DETAIL_COLSPAN = 10;
 
 function formatBytes(size: number | null): string {
   if (size === null || Number.isNaN(size)) return "—";
@@ -47,7 +51,16 @@ function rowKey(req: NetworkRequestEntry, index: number): string {
   return `${index}-${req.date}-${req.url}`;
 }
 
-export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
+function formatRemoteIp(req: NetworkRequestEntry): string {
+  if (!req.remoteIp) return "—";
+  if (req.remotePort != null) return `${req.remoteIp}:${req.remotePort}`;
+  return req.remoteIp;
+}
+
+export function NetworkRequestsPanel({
+  requests,
+  navigationTiming = null,
+}: NetworkRequestsPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [openRowKey, setOpenRowKey] = useState<string | null>(null);
   const [urlQuery, setUrlQuery] = useState("");
@@ -109,8 +122,8 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
           <p className="muted">
             All URLs requested by Playwright while loading the page. Showing{" "}
             {filtered.length} of {requests.length} responses
-            {hasActiveFilters ? " (filtered)" : ""}. Expand a row, then use tabs for
-            request or response headers, or response content.
+            {hasActiveFilters ? " (filtered)" : ""}. Expand a row for headers,
+            content, or timing.
           </p>
         </div>
         <button
@@ -214,7 +227,7 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
                 <thead>
                   <tr>
                     <th scope="col" className="col-toggle">
-                      <span className="sr-only">Headers</span>
+                      <span className="sr-only">Details</span>
                     </th>
                     <th scope="col" className="col-date">
                       Date
@@ -225,8 +238,14 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
                     <th scope="col" className="col-host">
                       Remote host
                     </th>
+                    <th scope="col" className="col-ip">
+                      Remote IP
+                    </th>
                     <th scope="col" className="col-status">
                       Status
+                    </th>
+                    <th scope="col" className="col-http">
+                      HTTP
                     </th>
                     <th scope="col" className="col-ctype">
                       Content type
@@ -245,6 +264,7 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
                     const isOpen = openRowKey === key;
                     const reqHeaders = req.requestHeaders ?? [];
                     const resHeaders = req.responseHeaders ?? [];
+                    const isDocument = req.resourceType === "document";
 
                     return (
                       <Fragment key={key}>
@@ -260,8 +280,8 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
                               aria-expanded={isOpen}
                               aria-label={
                                 isOpen
-                                  ? "Hide request and response headers"
-                                  : "Show request and response headers"
+                                  ? "Hide request details"
+                                  : "Show request details"
                               }
                               onClick={() => toggleRow(key)}
                             >
@@ -277,7 +297,23 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
                           <td className="network-host" title={req.host || undefined}>
                             {req.host || "—"}
                           </td>
+                          <td
+                            className="network-ip"
+                            title={
+                              req.remoteIp
+                                ? formatRemoteIp(req)
+                                : undefined
+                            }
+                          >
+                            {req.remoteIp || "—"}
+                          </td>
                           <td className="network-status">{req.status || "—"}</td>
+                          <td
+                            className="network-http"
+                            title={req.httpVersion || undefined}
+                          >
+                            {req.httpVersion || "—"}
+                          </td>
                           <td
                             className="network-ctype"
                             title={req.contentType || undefined}
@@ -302,6 +338,11 @@ export function NetworkRequestsPanel({ requests }: NetworkRequestsPanelProps) {
                                   bodyEncoding={req.bodyEncoding ?? "empty"}
                                   body={req.body ?? ""}
                                   bodyTruncated={req.bodyTruncated ?? false}
+                                  timing={req.timing}
+                                  navigationTiming={
+                                    isDocument ? navigationTiming : undefined
+                                  }
+                                  showTimingTab
                                   defaultTab="response"
                                   tableMaxHeightClass="network-headers-table-wrap"
                                 />

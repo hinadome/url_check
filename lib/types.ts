@@ -25,6 +25,40 @@ export type ResourceSummaryData = {
 
 export type NetworkBodyEncoding = "text" | "base64" | "empty";
 
+/** Playwright request.timing() / Resource Timing–style phases (ms; -1 = unavailable). */
+export type ResourceTiming = {
+  startTime: number;
+  domainLookupStart: number;
+  domainLookupEnd: number;
+  connectStart: number;
+  secureConnectionStart: number;
+  connectEnd: number;
+  requestStart: number;
+  responseStart: number;
+  responseEnd: number;
+};
+
+/** Page-level PerformanceNavigationTiming snapshot (ms relative to time origin). */
+export type NavigationTimingSnapshot = {
+  fetchStart: number;
+  domainLookupStart: number;
+  domainLookupEnd: number;
+  connectStart: number;
+  connectEnd: number;
+  secureConnectionStart: number;
+  requestStart: number;
+  responseStart: number;
+  responseEnd: number;
+  domInteractive: number;
+  domContentLoadedEventStart: number;
+  domContentLoadedEventEnd: number;
+  domComplete: number;
+  loadEventStart: number;
+  loadEventEnd: number;
+  redirectCount: number;
+  type: string;
+};
+
 export type NetworkRequestEntry = {
   url: string;
   host: string;
@@ -34,6 +68,14 @@ export type NetworkRequestEntry = {
   resourceType: string;
   /** ISO-8601 timestamp when the response was observed */
   date: string;
+  /** IP from response.serverAddr(); null if unavailable */
+  remoteIp: string | null;
+  /** Port from response.serverAddr(); null if unavailable */
+  remotePort: number | null;
+  /** e.g. http/1.1, h2 — from response.httpVersion() */
+  httpVersion: string | null;
+  /** Per-request Resource Timing from request.timing() */
+  timing: ResourceTiming | null;
   requestHeaders: HeaderPair[];
   responseHeaders: HeaderPair[];
   /** How `body` should be interpreted in the Content tab */
@@ -54,6 +96,8 @@ export type CheckResponse = {
   requestHeaders: HeaderPair[];
   responseHeaders: HeaderPair[];
   networkRequests: NetworkRequestEntry[];
+  /** Main document Navigation Timing (once per check) */
+  navigationTiming: NavigationTimingSnapshot | null;
   dnsOverride: DnsOverride | null;
   timingMs: number;
   error?: string;
