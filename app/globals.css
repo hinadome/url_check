@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
-:root {
+:root,
+[data-theme="light"] {
   color-scheme: light;
   --background: #f4f6f8;
   --foreground: #1a1d21;
@@ -27,6 +28,38 @@
   --track-bg: #eef1f4;
   --queue-a: #b8c0c8;
   --queue-b: #9aa3ab;
+}
+
+/* Before JS sets data-theme, follow system preference (no blocking <script>). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --background: #0d1117;
+    --foreground: #e6edf3;
+    --surface: #161b22;
+    --surface-muted: #21262d;
+    --surface-subtle: #1c2128;
+    --surface-hover: #30363d;
+    --border: #30363d;
+    --muted: #8b949e;
+    --primary: #4493f8;
+    --primary-hover: #78b7ff;
+    --on-primary: #0d1117;
+    --danger: #f85149;
+    --danger-bg: #3d1214;
+    --danger-border: #f85149;
+    --danger-fg: #ffc1be;
+    --info-bg: #0c2d6b;
+    --info-border: #388bfd;
+    --info-fg: #b6d0ff;
+    --error-bg: #3d1214;
+    --focus: #4493f8;
+    --row-open-bg: #1c2128;
+    --detail-bg: #161b22;
+    --track-bg: #21262d;
+    --queue-a: #484f58;
+    --queue-b: #6e7681;
+  }
 }
 
 [data-theme="dark"] {

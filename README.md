@@ -56,7 +56,7 @@ Typical uses:
 | Custom headers | Add/remove name–value pairs sent with the Playwright request context |
 | Force DNS | Optional hostname → IP map via Chromium `--host-resolver-rules` |
 | Status / meta | Final URL, HTTP status, timing, applied DNS override |
-| Theme | Light / dark mode toggle (persisted in `localStorage`; follows system preference on first visit) |
+| Theme | Light / dark mode toggle (persisted in `localStorage`; follows system preference on first visit; no blocking theme `<script>`) |
 | HTTP headers | Main-document request/response headers via **Request** / **Response** tabs |
 | Resource summary | Links, images, stylesheets, scripts, iframes, other URLs from the live DOM |
 | Full content | Screenshot, sandboxed HTML preview, plain-text HTML source |

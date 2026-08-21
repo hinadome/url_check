@@ -15,6 +15,8 @@ const STORAGE_KEY = "url-checker-theme";
 
 type ThemeContextValue = {
   theme: ThemeMode;
+  /** False until client has applied stored/system theme (avoids hydration mismatch). */
+  ready: boolean;
   setTheme: (theme: ThemeMode) => void;
   toggleTheme: () => void;
 };
@@ -32,10 +34,7 @@ function readStoredTheme(): ThemeMode | null {
 }
 
 function systemPrefersDark(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-color-scheme: dark)").matches
-  );
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
 function applyTheme(theme: ThemeMode) {
@@ -43,19 +42,16 @@ function applyTheme(theme: ThemeMode) {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeMode>(() => {
-    if (typeof document !== "undefined") {
-      const attr = document.documentElement.getAttribute("data-theme");
-      if (attr === "light" || attr === "dark") return attr;
-    }
-    return "light";
-  });
+  // Always "light" for SSR + first client render so markup matches.
+  const [theme, setThemeState] = useState<ThemeMode>("light");
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const initial =
       readStoredTheme() ?? (systemPrefersDark() ? "dark" : "light");
     setThemeState(initial);
     applyTheme(initial);
+    setReady(true);
   }, []);
 
   const setTheme = useCallback((next: ThemeMode) => {
@@ -73,7 +69,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [setTheme, theme]);
 
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, toggleTheme }}>
+    <ThemeContext.Provider value={{ theme, ready, setTheme, toggleTheme }}>
       {children}
     </ThemeContext.Provider>
   );
