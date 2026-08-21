@@ -8,6 +8,7 @@ export type UrlFormSubmit = {
   url: string;
   headers: HeaderPair[];
   dnsOverride?: DnsOverride;
+  ignoreCertErrors: boolean;
 };
 
 type UrlFormProps = {
@@ -20,6 +21,7 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
   const [headers, setHeaders] = useState<HeaderPair[]>([]);
   const [dnsHost, setDnsHost] = useState("");
   const [dnsIp, setDnsIp] = useState("");
+  const [ignoreCertErrors, setIgnoreCertErrors] = useState(false);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -46,6 +48,7 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
       url: trimmed,
       headers: headers.filter((h) => h.name.trim()),
       dnsOverride,
+      ignoreCertErrors,
     });
   };
 
@@ -94,6 +97,23 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
           </label>
         </div>
       </fieldset>
+
+      <label className="field-checkbox">
+        <input
+          type="checkbox"
+          checked={ignoreCertErrors}
+          onChange={(e) => setIgnoreCertErrors(e.target.checked)}
+          disabled={loading}
+        />
+        <span>
+          Ignore certificate errors
+          <span className="muted field-checkbox-hint">
+            {" "}
+            — allow self-signed / expired TLS (Playwright{" "}
+            <code>ignoreHTTPSErrors</code>)
+          </span>
+        </span>
+      </label>
 
       <HeaderEditor headers={headers} onChange={setHeaders} disabled={loading} />
 

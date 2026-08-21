@@ -12,6 +12,8 @@ export type CheckRequest = {
   url: string;
   headers?: HeaderPair[];
   dnsOverride?: DnsOverride;
+  /** When true, Playwright ignores TLS certificate errors (default false). */
+  ignoreCertErrors?: boolean;
 };
 
 export type ResourceSummaryData = {
@@ -99,6 +101,8 @@ export type CheckResponse = {
   /** Main document Navigation Timing (once per check) */
   navigationTiming: NavigationTimingSnapshot | null;
   dnsOverride: DnsOverride | null;
+  /** Whether this check ignored TLS certificate errors */
+  ignoreCertErrors: boolean;
   timingMs: number;
   error?: string;
 };

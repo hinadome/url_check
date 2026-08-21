@@ -65,6 +65,7 @@ export async function fetchWithPlaywright(
   url: string,
   headers: Record<string, string>,
   dnsOverride: DnsOverride | null = null,
+  ignoreCertErrors = false,
 ): Promise<CheckResponse> {
   const started = Date.now();
   const browser = await chromium.launch({
@@ -75,7 +76,7 @@ export async function fetchWithPlaywright(
   try {
     const context = await browser.newContext({
       extraHTTPHeaders: headers,
-      ignoreHTTPSErrors: false,
+      ignoreHTTPSErrors: ignoreCertErrors,
     });
     const page = await context.newPage();
     const network = attachNetworkCollector(page);
@@ -144,6 +145,7 @@ export async function fetchWithPlaywright(
       networkRequests: network.entries,
       navigationTiming,
       dnsOverride,
+      ignoreCertErrors,
       timingMs: Date.now() - started,
     };
   } finally {

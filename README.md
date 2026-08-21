@@ -32,10 +32,10 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 
 URL Checker is a single-page tool plus one server API:
 
-1. The user submits a URL, optional custom HTTP headers, and an optional DNS override (hostname → IP).
+1. The user submits a URL, optional custom HTTP headers, an optional DNS override (hostname → IP), and optionally **Ignore certificate errors**.
 2. The server validates input (including SSRF guards), then launches Playwright Chromium.
 3. If a DNS override is set, Chromium is started with `--host-resolver-rules=MAP <host> <ip>`.
-4. The browser navigates to the URL (`waitUntil: "load"`, plus a short best-effort `networkidle` wait).
+4. The browser navigates to the URL (`waitUntil: "load"`, plus a short best-effort `networkidle` wait). When ignore-cert is on, the context uses `ignoreHTTPSErrors: true`.
 5. The server collects HTML, a full-page screenshot, main-document headers, DOM resource URLs, and every network response observed during the load.
 6. The UI displays those results. Nothing is persisted to disk or a database.
 
@@ -55,7 +55,8 @@ Typical uses:
 | URL input | HTTP/HTTPS URL to check |
 | Custom headers | Add/remove name–value pairs sent with the Playwright request context |
 | Force DNS | Optional hostname → IP map via Chromium `--host-resolver-rules` |
-| Status / meta | Final URL, HTTP status, timing, applied DNS override |
+| Ignore cert errors | Optional checkbox (default **off**); Playwright `ignoreHTTPSErrors` for self-signed / expired TLS |
+| Status / meta | Final URL, HTTP status, timing, applied DNS override, TLS ignore flag when used |
 | Theme | Light / dark mode toggle (persisted in `localStorage`; follows system preference on first visit; no blocking theme `<script>`) |
 | HTTP headers | Main-document request/response headers via **Request** / **Response** tabs |
 | Resource summary | Links, images, stylesheets, scripts, iframes, other URLs from the live DOM |
@@ -69,13 +70,14 @@ Typical uses:
 
 ```text
 Browser UI (React)
-    │  POST /api/check  { url, headers?, dnsOverride? }
+    │  POST /api/check  { url, headers?, dnsOverride?, ignoreCertErrors? }
     ▼
 Next.js API route (Node.js)
     │  validate URL + headers + DNS override (SSRF guards)
     ▼
 Playwright Chromium
     │  optional: --host-resolver-rules=MAP host ip
+    │  optional: ignoreHTTPSErrors
     │  goto → capture HTML, screenshot, headers, DOM resources, network
     ▼
 JSON response → React state → UI panels
@@ -88,14 +90,14 @@ JSON response → React state → UI panels
    - Allows only `http`/`https`, blocks private/localhost targets, filters unsafe headers.
    - Validates optional `dnsOverride` (public IP; host must match URL hostname).
    - When a valid override is present, **skips Node DNS lookup** for the URL host (traffic will use the forced IP in Chromium).
-3. **Fetch** — `lib/playwright-fetch.ts` launches Chromium per request (with host-resolver args when overriding), applies `extraHTTPHeaders`, navigates with `waitUntil: "load"`, then optionally waits up to a few seconds for `networkidle` (timeout ignored so busy sites still succeed).
+3. **Fetch** — `lib/playwright-fetch.ts` launches Chromium per request (with host-resolver args when overriding), applies `extraHTTPHeaders`, sets `ignoreHTTPSErrors` when requested, navigates with `waitUntil: "load"`, then optionally waits up to a few seconds for `networkidle` (timeout ignored so busy sites still succeed).
 4. **Capture** (in this order, after navigation + settle):
    1. Main document headers via Playwright `allHeaders()`
    2. `finalUrl`, `title`, then HTML via `page.content()`
    3. **Screenshot** via `page.screenshot({ fullPage: true, type: "png" })`
    4. DOM resource extraction (`lib/extract-resources.ts`)
    5. Flush network log (`lib/network-collector.ts`; responses were collected throughout the load via a `response` listener)
-5. **Respond** — JSON returned to the client (includes `dnsOverride` used, or `null`); browser and in-memory server objects are discarded when the handler finishes.
+5. **Respond** — JSON returned to the client (includes `dnsOverride` used or `null`, and `ignoreCertErrors`); browser and in-memory server objects are discarded when the handler finishes.
 6. **Render** — Client stores the payload in React state and renders panels.
 
 ### Screenshot timing
@@ -171,14 +173,16 @@ curl -s -X POST http://localhost:3000/api/check \
 
 Because the hostname in the URL is unchanged, certificates are validated for that hostname as usual. If the forced IP does not present a valid cert for that name, navigation fails (e.g. `net::ERR_CERT_COMMON_NAME_INVALID`). That is expected when pointing a name at the wrong host.
 
+To proceed anyway (self-signed, expired, or name mismatch), check **Ignore certificate errors** in the UI or send `"ignoreCertErrors": true` on `POST /api/check`. That sets Playwright’s browser context `ignoreHTTPSErrors: true` (default **off**).
+
 ### Code map
 
 ```text
-components/UrlForm.tsx      → collect dnsHost / dnsIp
+components/UrlForm.tsx      → collect dnsHost / dnsIp / ignoreCertErrors
 app/api/check/route.ts      → validateDnsOverride + validateUrl({ skipDnsLookup })
 lib/validate.ts             → validateDnsOverride(), validateUrl()
-lib/playwright-fetch.ts     → --host-resolver-rules=MAP …
-lib/types.ts                → DnsOverride on CheckRequest / CheckResponse
+lib/playwright-fetch.ts     → --host-resolver-rules=MAP …; ignoreHTTPSErrors
+lib/types.ts                → DnsOverride + ignoreCertErrors on CheckRequest / CheckResponse
 ```
 
 ---
@@ -204,8 +208,8 @@ Implications:
 Layout (top to bottom after a successful check):
 
 1. **Header** — product title and **Light / Dark** theme toggle (persisted).
-2. **Form** — URL, optional force DNS (host + IP), custom header editor, submit.
-3. **Meta** — status, final URL, timing, DNS override (when used), and **Export** menu.
+2. **Form** — URL, optional force DNS (host + IP), **Ignore certificate errors** (default off), custom header editor, submit.
+3. **Meta** — status, final URL, timing, DNS override / TLS ignore (when used), and **Export** menu.
 4. **HTTP headers** — main-document headers with **Request** / **Response** tabs (full-width table per tab).
 5. **Resource summary** — collapsible lists of URLs found in the rendered DOM.
 6. **Full content**
@@ -264,7 +268,7 @@ Components live under `components/`:
 
 - `ThemeToggle.tsx` / `ThemeProvider.tsx` — light/dark mode (header toggle; `data-theme` on `<html>`)
 - `ExportMenu.tsx` — result export dropdown
-- `UrlForm.tsx` / `HeaderEditor.tsx` — input (including DNS override)
+- `UrlForm.tsx` / `HeaderEditor.tsx` — input (DNS override, ignore cert errors, headers)
 - `HeadersPanel.tsx` / `HeadersTabs.tsx` — main-document headers (Request / Response); network rows also Content / Timing
 - `ResourceSummary.tsx` — DOM resource lists
 - `ContentPreview.tsx` — screenshot / HTML / plain text tabs
@@ -619,7 +623,8 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
   "dnsOverride": {
     "host": "example.com",
     "ip": "203.0.113.10"
-  }
+  },
+  "ignoreCertErrors": false
 }
 ```
 
@@ -628,6 +633,7 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
 | `url` | string | Yes | Absolute `http` or `https` URL |
 | `headers` | `{ name, value }[]` | No | Extra headers applied to the Playwright browser context |
 | `dnsOverride` | `{ host, ip }` | No | Force Chromium to resolve `host` to `ip` (must match URL hostname; private IPs blocked) |
+| `ignoreCertErrors` | boolean | No | When `true`, Playwright context uses `ignoreHTTPSErrors` (self-signed / expired TLS). Default `false` / omitted |
 
 #### Success response
 
@@ -696,6 +702,7 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
     "host": "example.com",
     "ip": "203.0.113.10"
   },
+  "ignoreCertErrors": false,
   "timingMs": 2100
 }
 ```
@@ -712,6 +719,7 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
 | `networkRequests` | Observed responses with date, URL, host, remote IP/port, HTTP version, status, content type/size/type, timing, per-entry headers, and `body` / `bodyEncoding` / `bodyTruncated` for the Content tab (capped; see limits) |
 | `navigationTiming` | Page `PerformanceNavigationTiming` snapshot, or `null` |
 | `dnsOverride` | Applied force-resolve mapping, or `null` |
+| `ignoreCertErrors` | Whether this check used Playwright `ignoreHTTPSErrors` |
 | `timingMs` | Server-side elapsed time for the check |
 | `error` | Present on failure responses |
 
@@ -744,7 +752,7 @@ url_checker/
 │   ├── TimingWaterfall.tsx   # Resource / Navigation timing waterfall graph
 │   ├── NetworkRequestsPanel.tsx
 │   ├── ResourceSummary.tsx
-│   └── UrlForm.tsx           # URL, DNS override, headers
+│   └── UrlForm.tsx           # URL, DNS override, ignore cert errors, headers
 ├── lib/
 │   ├── export.ts             # Client-side export builders (JSON/PNG/HTML/CSV)
 │   ├── extract-resources.ts  # DOM URL extraction
@@ -852,6 +860,7 @@ Built-in guards (v1):
 - Dangerous hop-by-hop / override headers blocked (for example `Host`, `Connection`, `Transfer-Encoding`).
 - Header name/value length and count limits.
 - Optional DNS override must use a **public** IP and a host that **matches** the URL hostname; Node DNS lookup is skipped only when a valid override is present (prevents using MAP to reach RFC1918 addresses).
+- **Ignore certificate errors** is **off** by default; enabling it only relaxes TLS verification inside Playwright (`ignoreHTTPSErrors`) and does not weaken SSRF / private-IP guards.
 - HTML preview uses an empty `sandbox` attribute so scripts do not execute in the UI.
 
 This is not a full multi-tenant hardening suite. Do not expose an open instance to the public internet without auth, rate limits, and further SSRF review.

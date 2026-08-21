@@ -42,10 +42,12 @@ export async function POST(request: Request) {
       skipDnsLookup: dnsOverride !== null,
     });
     const headers = validateHeaders(body.headers);
+    const ignoreCertErrors = body.ignoreCertErrors === true;
     const result = await fetchWithPlaywright(
       parsedUrl.toString(),
       headers,
       dnsOverride,
+      ignoreCertErrors,
     );
     return NextResponse.json(result);
   } catch (err) {
@@ -75,6 +77,7 @@ export async function POST(request: Request) {
         networkRequests: [],
         navigationTiming: null,
         dnsOverride: null,
+        ignoreCertErrors: false,
         timingMs: 0,
         error: message,
       } satisfies CheckResponse,

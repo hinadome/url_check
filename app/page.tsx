@@ -93,6 +93,11 @@ export default function Home() {
                   </strong>
                 </span>
               )}
+              {result.ignoreCertErrors && (
+                <span>
+                  TLS: <strong>certificate errors ignored</strong>
+                </span>
+              )}
             </div>
             <ExportMenu result={result} />
           </div>
