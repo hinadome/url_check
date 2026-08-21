@@ -13,7 +13,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 3. [Architecture](#architecture) (includes [Screenshot timing](#screenshot-timing))
 4. [Force DNS resolution](#force-dns-resolution)
 5. [How content is stored](#how-content-is-stored)
-6. [User interface](#user-interface) (includes [Resource summary vs Network requests](#resource-summary-vs-network-requests))
+6. [User interface](#user-interface) (includes [Resource summary vs Network requests](#resource-summary-vs-network-requests), [Plain text and non-HTML responses](#plain-text-and-non-html-responses))
 7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only), [Timing tab](#timing-tab-network-rows-only) / [Resource timing](#resource-timing) / [Navigation timing](#navigation-timing))
 8. [Export](#export)
 9. [Deployment (Vercel / Netlify)](#deployment-vercel--netlify) — prefer VM/container: [DEPLOYMENT.md](DEPLOYMENT.md)
@@ -211,8 +211,35 @@ Layout (top to bottom after a successful check):
 6. **Full content**
    - **Screenshot** — full-page PNG (`data:image/png;base64,...`), captured after `load` (+ optional `networkidle` settle) and after HTML is read (see [Screenshot timing](#screenshot-timing)).
    - **HTML** — sandboxed iframe (`sandbox=""`, `srcDoc`) so scripts do not run in the preview.
-   - **Plain text** — raw HTML source shown as text in a `<pre>` block.
+   - **Plain text** — serialized document from `page.content()` shown as text in a `<pre>` block (see [Plain text and non-HTML responses](#plain-text-and-non-html-responses)).
 7. **Network requests** — expandable, filterable table; per-row Request / Response / Content tabs (see [Network requests panel](#network-requests-panel)).
+
+### Plain text and non-HTML responses
+
+**Plain text** under Full content does **not** invent HTML. It prints whatever Playwright captured with `page.content()` (`lib/playwright-fetch.ts`), unchanged, inside a `<pre>` (`components/ContentPreview.tsx`).
+
+When the checked URL returns **JSON** (or some other non-HTML body), Chromium often builds a small **viewer document** around the payload instead of leaving a bare JSON string as the page source. That wrapper commonly looks like:
+
+```html
+<html>
+  <head>
+    <meta name="color-scheme" content="light dark">
+    <meta charset="utf-8">
+  </head>
+  <body>
+    <pre>…actual JSON or text…</pre>
+  </body>
+</html>
+```
+
+So in Plain text you may see outer `<html>`, `color-scheme`, and `<pre>` tags **plus** your JSON inside `<pre>`. That shell is from **Chromium’s display of the resource**, not from the Plain text tab adding markup.
+
+| View | What you get |
+|------|----------------|
+| Full content → **Plain text** / **HTML** | Browser document DOM (`page.content()`), including any Chromium JSON/text viewer wrapper |
+| Network row → **Content** | HTTP response **body** from the network collector (closer to raw JSON bytes for that response) |
+
+For the true response payload of a JSON API call, prefer the matching **Network requests** row → **Content** tab (or JSON export of that entry’s `body`).
 
 ### Resource summary vs Network requests
 
