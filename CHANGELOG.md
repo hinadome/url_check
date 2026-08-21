@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Network **Remote IP** (`remoteIp` / `remotePort` via `response.serverAddr()`) and **HTTP** (`httpVersion` via `response.httpVersion()`) columns.
 - Network row **Timing** tab: per-request Resource Timing (`request.timing()` → `timing`) plus page **Navigation Timing** on document rows (`navigationTiming` on the check result).
+- Timing tab **waterfall graph** (`components/TimingWaterfall.tsx`): stacked + per-phase bars for Resource timing; Navigation waterfall on document rows.
 - **Date** column on Network requests (`date` ISO timestamp when each response was observed; rows sorted chronologically).
 - Network requests panel **Expand width** / **Collapse width** control for near-full viewport width.
 - Network panel default layout **breaks out** of the main form column (wider than 960px) so the table has room to breathe.

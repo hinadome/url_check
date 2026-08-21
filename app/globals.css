@@ -712,6 +712,157 @@ a:hover {
   font-size: 0.75rem;
 }
 
+.timing-waterfall {
+  margin: 0 0 0.85rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.timing-waterfall-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  margin-bottom: 0.55rem;
+}
+
+.timing-waterfall-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.timing-waterfall-total {
+  font-size: 0.75rem;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+.timing-waterfall-stacked {
+  margin-bottom: 0.5rem;
+}
+
+.timing-waterfall-track {
+  position: relative;
+  height: 0.85rem;
+  background: #eef1f4;
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+}
+
+.timing-waterfall-track--stacked {
+  height: 1.1rem;
+}
+
+.timing-waterfall-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  min-width: 2px;
+}
+
+.timing-bar--dns {
+  background: #3d7a66;
+}
+
+.timing-bar--connect {
+  background: #2f6f8f;
+}
+
+.timing-bar--tls {
+  background: #b7791f;
+}
+
+.timing-bar--wait {
+  background: #a35d45;
+}
+
+.timing-bar--download {
+  background: #3f5f8a;
+}
+
+.timing-bar--dom {
+  background: #5a7a4a;
+}
+
+.timing-bar--load {
+  background: #4d6b5c;
+}
+
+.timing-waterfall-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.85rem;
+  margin: 0 0 0.65rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.timing-waterfall-swatch {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 2px;
+  margin-right: 0.3rem;
+  vertical-align: -0.1rem;
+}
+
+.timing-waterfall-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.timing-waterfall-row {
+  display: grid;
+  grid-template-columns: minmax(7rem, 28%) minmax(0, 1fr) 4.5rem;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.timing-waterfall-label {
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.timing-waterfall-duration {
+  font-size: 0.72rem;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+@media (max-width: 640px) {
+  .timing-waterfall-row {
+    grid-template-columns: minmax(0, 1fr) 4rem;
+    grid-template-areas:
+      "label duration"
+      "track track";
+  }
+
+  .timing-waterfall-row .timing-waterfall-label {
+    grid-area: label;
+  }
+
+  .timing-waterfall-row .timing-waterfall-duration {
+    grid-area: duration;
+  }
+
+  .timing-waterfall-row .timing-waterfall-track {
+    grid-area: track;
+  }
+}
+
 .network-timing-table-wrap {
   max-height: 300px;
   max-width: 100%;

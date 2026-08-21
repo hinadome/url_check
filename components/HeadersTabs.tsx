@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { TimingWaterfall, buildNavigationWaterfallPhases, buildResourceWaterfallPhases } from "./TimingWaterfall";
 import type {
   HeaderPair,
   NavigationTimingSnapshot,
@@ -243,6 +244,13 @@ function TimingPanel({
         From Playwright <code>request.timing()</code> (Resource Timing–style
         phases; −1 shown as —).
       </p>
+      {timing ? (
+        <TimingWaterfall
+          title="Resource waterfall"
+          phases={buildResourceWaterfallPhases(timing)}
+          totalMs={timing.responseEnd}
+        />
+      ) : null}
       {resourceRows.length === 0 ? (
         <p className="muted">No resource timing captured for this request.</p>
       ) : (
@@ -258,6 +266,17 @@ function TimingPanel({
             Page <code>PerformanceNavigationTiming</code> (shown on the main
             document row).
           </p>
+          {navigationTiming ? (
+            <TimingWaterfall
+              title="Navigation waterfall"
+              phases={buildNavigationWaterfallPhases(navigationTiming)}
+              totalMs={Math.max(
+                navigationTiming.loadEventEnd,
+                navigationTiming.domComplete,
+                navigationTiming.responseEnd,
+              )}
+            />
+          ) : null}
           {navRows.length === 0 ? (
             <p className="muted">No navigation timing available.</p>
           ) : (

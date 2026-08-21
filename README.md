@@ -307,8 +307,8 @@ Expand a network row → **Timing**.
 
 | Section | Source | When shown |
 |---------|--------|------------|
-| **Resource timing** | Playwright `request.timing()` (`timing` on each entry) | Every network row (see [Resource timing](#resource-timing)) |
-| **Navigation timing** | Page `performance.getEntriesByType('navigation')` → `navigationTiming` on the check result | Only on rows with `resourceType === "document"` |
+| **Resource timing** | Playwright `request.timing()` (`timing` on each entry) | Every network row (see [Resource timing](#resource-timing)); includes a **waterfall** graph |
+| **Navigation timing** | Page `performance.getEntriesByType('navigation')` → `navigationTiming` on the check result | Only on rows with `resourceType === "document"`; includes a **waterfall** when present |
 
 Timing details stay in **JSON** export; Network CSV includes `remoteIp` / `remotePort` / `httpVersion` but not full timing maps.
 
@@ -359,6 +359,17 @@ startTime
   ├─ responseStart                           (first byte / TTFB)
   └─ responseEnd                             (body complete)
 ```
+
+**Waterfall graph (Timing tab)**
+
+Above the Resource timing table, the UI draws a DevTools-style waterfall (`components/TimingWaterfall.tsx`):
+
+- **Stacked bar** — all phases on one timeline (0 → `responseEnd` or the latest phase end)
+- **Per-phase rows** — DNS, Connect, TLS (when present), Waiting (TTFB), Content download, with duration labels
+- Phases with `-1` / missing ranges are omitted
+- Zero-length phases render as a thin marker
+
+Document rows also get a **Navigation waterfall** (DNS → load event) above the Navigation timing table.
 
 **Why some values are —**
 
@@ -664,6 +675,7 @@ url_checker/
 │   ├── HeaderEditor.tsx
 │   ├── HeadersPanel.tsx
 │   ├── HeadersTabs.tsx       # Shared Request/Response/Content/Timing tabs
+│   ├── TimingWaterfall.tsx   # Resource / Navigation timing waterfall graph
 │   ├── NetworkRequestsPanel.tsx
 │   ├── ResourceSummary.tsx
 │   └── UrlForm.tsx           # URL, DNS override, headers
