@@ -159,12 +159,65 @@ PY
   run_root nginx -t
   run_root systemctl enable nginx
   run_root systemctl reload nginx || run_root systemctl restart nginx
+
+  # Sanity: webroot must be writable for certbot (runs as root)
+  run_root mkdir -p "${WEBROOT}/.well-known/acme-challenge"
+  run_root bash -c "echo ok > '${WEBROOT}/.well-known/acme-challenge/setup-https-probe'"
+  if ! curl -fsS "http://127.0.0.1/.well-known/acme-challenge/setup-https-probe" >/dev/null 2>&1; then
+    log "WARNING: local ACME probe failed via 127.0.0.1 — check nginx server_name / default_server"
+    log "  curl -v http://127.0.0.1/.well-known/acme-challenge/setup-https-probe"
+    log "  curl -v -H 'Host: ${DOMAIN}' http://127.0.0.1/.well-known/acme-challenge/setup-https-probe"
+  else
+    log "Local ACME webroot probe OK"
+  fi
+  run_root rm -f "${WEBROOT}/.well-known/acme-challenge/setup-https-probe"
+}
+
+# /etc/letsencrypt/live is usually root-only (0700) — never test -f as a normal user.
+cert_exists() {
+  local cert_dir="$1"
+  run_root test -f "${cert_dir}/fullchain.pem" \
+    && run_root test -f "${cert_dir}/privkey.pem"
+}
+
+# Prefer exact DOMAIN lineage; fall back to DOMAIN-000N if certbot created a suffix.
+resolve_cert_dir() {
+  local preferred="/etc/letsencrypt/live/${DOMAIN}"
+  if cert_exists "$preferred"; then
+    printf '%s' "$preferred"
+    return 0
+  fi
+
+  local found=""
+  # shellcheck disable=SC2012
+  found="$(
+    run_root bash -c "
+      shopt -s nullglob
+      for d in /etc/letsencrypt/live/${DOMAIN} /etc/letsencrypt/live/${DOMAIN}-*; do
+        if [[ -f \"\$d/fullchain.pem\" && -f \"\$d/privkey.pem\" ]]; then
+          echo \"\$d\"
+        fi
+      done
+    " | sort | tail -n1
+  )"
+  if [[ -n "$found" ]]; then
+    log "Using certificate lineage at ${found}"
+    printf '%s' "$found"
+    return 0
+  fi
+  return 1
 }
 
 obtain_certificate() {
   local cert_dir="/etc/letsencrypt/live/${DOMAIN}"
-  if [[ -f "${cert_dir}/fullchain.pem" && -f "${cert_dir}/privkey.pem" && "$FORCE_RENEW" -eq 0 ]]; then
+  if cert_exists "$cert_dir" && [[ "$FORCE_RENEW" -eq 0 ]]; then
     log "Certificate already present at ${cert_dir} (use --force-renew to renew)"
+    return 0
+  fi
+
+  # Existing -000N lineage counts as present unless forcing renew
+  if [[ "$FORCE_RENEW" -eq 0 ]] && resolve_cert_dir >/dev/null; then
+    log "Certificate lineage already present for ${DOMAIN} (use --force-renew to renew)"
     return 0
   fi
 
@@ -175,10 +228,10 @@ obtain_certificate() {
     --webroot
     -w "$WEBROOT"
     -d "$DOMAIN"
+    --cert-name "$DOMAIN"
     --non-interactive
     --agree-tos
     --email "$CERTBOT_EMAIL"
-    --keep-until-expiring
   )
   if [[ "$STAGING" -eq 1 ]]; then
     args+=(--staging)
@@ -189,16 +242,33 @@ obtain_certificate() {
   fi
 
   log "Requesting certificate for ${DOMAIN}"
-  run_root certbot "${args[@]}"
-  [[ -f "${cert_dir}/fullchain.pem" ]] || die "Certificate not found after certbot at ${cert_dir}"
+  if ! run_root certbot "${args[@]}"; then
+    die "certbot failed. Common causes: DNS not pointing here, port 80 blocked, or ACME challenge not reachable.
+  Debug:
+    sudo certbot certificates
+    sudo ls -la /etc/letsencrypt/live/
+    curl -v -H 'Host: ${DOMAIN}' http://127.0.0.1/.well-known/acme-challenge/setup-https-probe
+    curl -v http://${DOMAIN}/.well-known/acme-challenge/ (from outside)"
+  fi
+
+  if ! resolve_cert_dir >/dev/null; then
+    log "certbot exited but no live cert found. Listing lineages:"
+    run_root certbot certificates || true
+    run_root ls -la /etc/letsencrypt/live/ || true
+    die "Certificate not found after certbot under /etc/letsencrypt/live/${DOMAIN} (or ${DOMAIN}-*).
+  If ACME failed, fix DNS/firewall and re-run.
+  Note: live/ is root-only — this script now checks with sudo."
+  fi
 }
 
 install_https_site() {
-  local cert="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
-  local key="/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
-  [[ -f "$cert" && -f "$key" ]] || die "Missing cert/key under /etc/letsencrypt/live/${DOMAIN}/"
+  local cert_dir
+  cert_dir="$(resolve_cert_dir)" || die "Missing cert/key under /etc/letsencrypt/live/${DOMAIN}/"
+  local cert="${cert_dir}/fullchain.pem"
+  local key="${cert_dir}/privkey.pem"
 
   log "Installing HTTPS nginx site (443 + HTTP→HTTPS redirect)"
+  log "SSL cert: ${cert}"
   local tmp
   tmp="$(mktemp)"
   sed \

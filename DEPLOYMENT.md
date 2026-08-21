@@ -197,6 +197,7 @@ curl -sI "http://127.0.0.1:${PORT:-3000}/"
 | Port in use | `PORT=8080 ./scripts/deploy-vm.sh` or change existing service |
 | nginx fails `nginx -t` / port 80 busy | `sudo nginx -t`; stop other web servers; or `NGINX_PORT=8080 ./scripts/deploy-vm.sh`; or `--no-nginx` |
 | App reachable on :3000 but not :80 | Check `systemctl status nginx`; firewall/security group must allow **80** (and **443** after certbot) |
+| `setup-https` “Certificate not found after certbot” | Often a **false negative**: `/etc/letsencrypt/live` is root-only, so a non-root `test -f` fails. Current script checks with `sudo`. Re-pull and re-run. Also verify: `sudo ls -la /etc/letsencrypt/live/`, `sudo certbot certificates`, DNS A record, port 80 from the internet, and ACME path `http://<domain>/.well-known/acme-challenge/` |
 
 ---
 

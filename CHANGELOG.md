@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - VM deploy script avoids OOM during `npm ci` by skipping Playwright postinstall / browser download, installing Chromium separately, and optionally enabling swap on low-RAM hosts
 - VM **nginx** front proxy (default on full systemd deploy): public HTTP (`NGINX_PORT`, default 80) → `127.0.0.1:$PORT`; `--no-nginx` to expose the app directly; env knobs `SERVER_NAME`, `CLIENT_MAX_BODY`, `PROXY_READ_TIMEOUT`
 - Post-deploy **HTTPS** script [`scripts/setup-https.sh`](scripts/setup-https.sh): domain parameter + Let's Encrypt (`certbot`) + nginx TLS site from [`deploy/nginx-url-checker-https.conf`](deploy/nginx-url-checker-https.conf) (HTTP→HTTPS redirect, renewal hook)
+- `setup-https.sh` checks certificate files with **sudo** (fixes false “Certificate not found” when `/etc/letsencrypt/live` is root-only); uses `--cert-name`, resolves `domain-000N` lineages, and probes the ACME webroot
 
 ### Changed
 
