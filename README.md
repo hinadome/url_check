@@ -56,6 +56,7 @@ Typical uses:
 | Custom headers | Add/remove name–value pairs sent with the Playwright request context |
 | Force DNS | Optional hostname → IP map via Chromium `--host-resolver-rules` |
 | Status / meta | Final URL, HTTP status, timing, applied DNS override |
+| Theme | Light / dark mode toggle (persisted in `localStorage`; follows system preference on first visit) |
 | HTTP headers | Main-document request/response headers via **Request** / **Response** tabs |
 | Resource summary | Links, images, stylesheets, scripts, iframes, other URLs from the live DOM |
 | Full content | Screenshot, sandboxed HTML preview, plain-text HTML source |
@@ -202,15 +203,16 @@ Implications:
 
 Layout (top to bottom after a successful check):
 
-1. **Form** — URL, optional force DNS (host + IP), custom header editor, submit.
-2. **Meta** — status, final URL, timing, DNS override (when used), and **Export** menu.
-3. **HTTP headers** — main-document headers with **Request** / **Response** tabs (full-width table per tab).
-4. **Resource summary** — collapsible lists of URLs found in the rendered DOM.
-5. **Full content**
+1. **Header** — product title and **Light / Dark** theme toggle (persisted).
+2. **Form** — URL, optional force DNS (host + IP), custom header editor, submit.
+3. **Meta** — status, final URL, timing, DNS override (when used), and **Export** menu.
+4. **HTTP headers** — main-document headers with **Request** / **Response** tabs (full-width table per tab).
+5. **Resource summary** — collapsible lists of URLs found in the rendered DOM.
+6. **Full content**
    - **Screenshot** — full-page PNG (`data:image/png;base64,...`), captured after `load` (+ optional `networkidle` settle) and after HTML is read (see [Screenshot timing](#screenshot-timing)).
    - **HTML** — sandboxed iframe (`sandbox=""`, `srcDoc`) so scripts do not run in the preview.
    - **Plain text** — raw HTML source shown as text in a `<pre>` block.
-6. **Network requests** — expandable, filterable table; per-row Request / Response / Content tabs (see [Network requests panel](#network-requests-panel)).
+7. **Network requests** — expandable, filterable table; per-row Request / Response / Content tabs (see [Network requests panel](#network-requests-panel)).
 
 ### Resource summary vs Network requests
 
@@ -233,6 +235,7 @@ The **unique URLs** count on Resource summary and the **responses** count on Net
 
 Components live under `components/`:
 
+- `ThemeToggle.tsx` / `ThemeProvider.tsx` — light/dark mode (header toggle; `data-theme` on `<html>`)
 - `ExportMenu.tsx` — result export dropdown
 - `UrlForm.tsx` / `HeaderEditor.tsx` — input (including DNS override)
 - `HeadersPanel.tsx` / `HeadersTabs.tsx` — main-document headers (Request / Response); network rows also Content / Timing
@@ -687,6 +690,8 @@ url_checker/
 │   ├── HeaderEditor.tsx
 │   ├── HeadersPanel.tsx
 │   ├── HeadersTabs.tsx       # Shared Request/Response/Content/Timing tabs
+│   ├── ThemeProvider.tsx     # Light/dark theme context + persistence
+│   ├── ThemeToggle.tsx       # Header theme switch control
 │   ├── TimingWaterfall.tsx   # Resource / Navigation timing waterfall graph
 │   ├── NetworkRequestsPanel.tsx
 │   ├── ResourceSummary.tsx

@@ -6,6 +6,7 @@ import { ExportMenu } from "@/components/ExportMenu";
 import { HeadersPanel } from "@/components/HeadersPanel";
 import { NetworkRequestsPanel } from "@/components/NetworkRequestsPanel";
 import { ResourceSummary } from "@/components/ResourceSummary";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { UrlForm, type UrlFormSubmit } from "@/components/UrlForm";
 import type { CheckResponse } from "@/lib/types";
 
@@ -44,7 +45,10 @@ export default function Home() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <h1>URL Checker</h1>
+        <div className="app-header-top">
+          <h1>URL Checker</h1>
+          <ThemeToggle />
+        </div>
         <p>
           Enter a URL and optional headers. Playwright loads the page in a real
           browser, then shows extracted resources, a screenshot, and sandboxed HTML.

@@ -1,18 +1,61 @@
 @import "tailwindcss";
 
 :root {
+  color-scheme: light;
   --background: #f4f6f8;
   --foreground: #1a1d21;
   --surface: #ffffff;
+  --surface-muted: #f6f8fa;
+  --surface-subtle: #fafbfc;
+  --surface-hover: #eaeef2;
   --border: #d0d7de;
   --muted: #656d76;
   --primary: #0969da;
   --primary-hover: #0550ae;
+  --on-primary: #ffffff;
   --danger: #cf222e;
   --danger-bg: #ffebe9;
+  --danger-border: #ff8182;
+  --danger-fg: #82071e;
   --info-bg: #ddf4ff;
+  --info-border: #54aeff;
+  --info-fg: #0a3069;
   --error-bg: #ffebe9;
   --focus: #0969da;
+  --row-open-bg: #eef2f6;
+  --detail-bg: #f3f5f7;
+  --track-bg: #eef1f4;
+  --queue-a: #b8c0c8;
+  --queue-b: #9aa3ab;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0d1117;
+  --foreground: #e6edf3;
+  --surface: #161b22;
+  --surface-muted: #21262d;
+  --surface-subtle: #1c2128;
+  --surface-hover: #30363d;
+  --border: #30363d;
+  --muted: #8b949e;
+  --primary: #4493f8;
+  --primary-hover: #78b7ff;
+  --on-primary: #0d1117;
+  --danger: #f85149;
+  --danger-bg: #3d1214;
+  --danger-border: #f85149;
+  --danger-fg: #ffc1be;
+  --info-bg: #0c2d6b;
+  --info-border: #388bfd;
+  --info-fg: #b6d0ff;
+  --error-bg: #3d1214;
+  --focus: #4493f8;
+  --row-open-bg: #1c2128;
+  --detail-bg: #161b22;
+  --track-bg: #21262d;
+  --queue-a: #484f58;
+  --queue-b: #6e7681;
 }
 
 @theme inline {
@@ -60,8 +103,36 @@ a:hover {
   letter-spacing: -0.02em;
 }
 
-.app-header p {
+.app-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.app-header-top h1 {
   margin: 0;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.theme-toggle-icon {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.theme-toggle-label {
+  font-size: 0.85rem;
+}
+
+.app-header p {
+  margin: 0.35rem 0 0;
   color: var(--muted);
   max-width: 42rem;
 }
@@ -91,7 +162,7 @@ a:hover {
   padding: 0.55rem 0.7rem;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
   color: var(--foreground);
 }
 
@@ -118,7 +189,7 @@ a:hover {
   padding: 0.85rem 0.9rem;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fafbfc;
+  background: var(--surface-subtle);
 }
 
 .dns-override legend {
@@ -172,7 +243,7 @@ a:hover {
 .btn-primary {
   align-self: flex-start;
   background: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -180,7 +251,7 @@ a:hover {
 }
 
 .btn-secondary {
-  background: #f6f8fa;
+  background: var(--surface-muted);
   border-color: var(--border);
   color: var(--foreground);
   font-size: 0.85rem;
@@ -188,7 +259,7 @@ a:hover {
 }
 
 .btn-danger {
-  background: #fff;
+  background: var(--surface);
   border-color: var(--border);
   color: var(--danger);
   font-size: 0.85rem;
@@ -202,14 +273,14 @@ a:hover {
 
 .alert-error {
   background: var(--error-bg);
-  border-color: #ff8182;
-  color: #82071e;
+  border-color: var(--danger-border);
+  color: var(--danger-fg);
 }
 
 .alert-info {
   background: var(--info-bg);
-  border-color: #54aeff;
-  color: #0a3069;
+  border-color: var(--info-border);
+  color: var(--info-fg);
 }
 
 .results {
@@ -255,7 +326,7 @@ a:hover {
   list-style: none;
   min-width: 18rem;
   max-width: min(24rem, 90vw);
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(27, 31, 35, 0.12);
@@ -278,7 +349,7 @@ a:hover {
 }
 
 .export-menu-item:hover:not(:disabled) {
-  background: #f6f8fa;
+  background: var(--surface-muted);
 }
 
 .export-menu-item:disabled {
@@ -336,7 +407,7 @@ a:hover {
   padding: 0.75rem 0.85rem;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #f6f8fa;
+  background: var(--surface-muted);
 }
 
 .network-filter-field {
@@ -358,7 +429,7 @@ a:hover {
   padding: 0.45rem 0.55rem;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
   width: 100%;
   min-width: 0;
 }
@@ -409,7 +480,7 @@ a:hover {
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fafbfc;
+  background: var(--surface-subtle);
 }
 
 .headers-table {
@@ -430,7 +501,7 @@ a:hover {
 .headers-table th {
   position: sticky;
   top: 0;
-  background: #f6f8fa;
+  background: var(--surface-muted);
   font-weight: 600;
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   font-size: 0.75rem;
@@ -474,7 +545,7 @@ a:hover {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: #f6f8fa;
+  background: var(--surface-muted);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.55rem 0.75rem;
@@ -491,7 +562,7 @@ a:hover {
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fafbfc;
+  background: var(--surface-subtle);
   font-size: 0.85rem;
   font-family: var(--font-geist-mono), ui-monospace, monospace;
 }
@@ -514,7 +585,7 @@ a:hover {
   font: inherit;
   cursor: pointer;
   border: 1px solid var(--border);
-  background: #f6f8fa;
+  background: var(--surface-muted);
   border-radius: 6px;
   padding: 0.35rem 0.75rem;
   font-size: 0.9rem;
@@ -523,7 +594,7 @@ a:hover {
 .tab.active {
   background: var(--primary);
   border-color: var(--primary);
-  color: #fff;
+  color: var(--on-primary);
 }
 
 .screenshot-pane {
@@ -531,7 +602,7 @@ a:hover {
   border-radius: 6px;
   overflow: auto;
   max-height: 70vh;
-  background: #eaeef2;
+  background: var(--surface-hover);
 }
 
 .screenshot-pane img {
@@ -545,14 +616,14 @@ a:hover {
   border-radius: 6px;
   overflow: hidden;
   height: 70vh;
-  background: #fff;
+  background: var(--surface);
 }
 
 .html-iframe {
   width: 100%;
   height: 100%;
   border: 0;
-  background: #fff;
+  background: var(--surface);
 }
 
 .plaintext-pane {
@@ -560,7 +631,7 @@ a:hover {
   border-radius: 6px;
   overflow: auto;
   max-height: 70vh;
-  background: #fafbfc;
+  background: var(--surface-subtle);
 }
 
 .plaintext-content {
@@ -579,7 +650,7 @@ a:hover {
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fafbfc;
+  background: var(--surface-subtle);
 }
 
 .network-table {
@@ -596,14 +667,14 @@ a:hover {
   vertical-align: top;
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--border);
-  background: #fafbfc;
+  background: var(--surface-subtle);
 }
 
 .network-table th {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #f6f8fa;
+  background: var(--surface-muted);
   font-weight: 600;
   font-size: 0.75rem;
   text-transform: uppercase;
@@ -661,12 +732,12 @@ a:hover {
 }
 
 .network-row-open td {
-  background: #eef2f6;
+  background: var(--row-open-bg);
 }
 
 /* Isolate expanded headers so they cannot widen the list columns */
 .network-detail-row > td {
-  background: #f3f5f7;
+  background: var(--detail-bg);
   padding: 0.75rem;
   overflow: hidden;
 }
@@ -685,7 +756,7 @@ a:hover {
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .network-timing-panel {
@@ -717,7 +788,7 @@ a:hover {
   padding: 0.75rem;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
   max-width: 100%;
   min-width: 0;
 }
@@ -748,7 +819,7 @@ a:hover {
 .timing-waterfall-track {
   position: relative;
   height: 0.85rem;
-  background: #eef1f4;
+  background: var(--track-bg);
   border-radius: 3px;
   overflow: hidden;
   min-width: 0;
@@ -790,10 +861,10 @@ a:hover {
 .timing-bar--queue {
   background: repeating-linear-gradient(
     -45deg,
-    #b8c0c8,
-    #b8c0c8 3px,
-    #9aa3ab 3px,
-    #9aa3ab 6px
+    var(--queue-a),
+    var(--queue-a) 3px,
+    var(--queue-b) 3px,
+    var(--queue-b) 6px
   );
 }
 
@@ -880,7 +951,7 @@ a:hover {
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
   box-sizing: border-box;
 }
 
@@ -898,13 +969,13 @@ a:hover {
   vertical-align: top;
   padding: 0.4rem 0.55rem;
   border-bottom: 1px solid var(--border);
-  background: #fff;
+  background: var(--surface);
 }
 
 .network-timing-table-wrap .timing-table th {
   position: sticky;
   top: 0;
-  background: #f6f8fa;
+  background: var(--surface-muted);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   font-size: 0.7rem;
   text-transform: uppercase;
@@ -940,7 +1011,7 @@ a:hover {
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
   box-sizing: border-box;
 }
 
@@ -958,13 +1029,13 @@ a:hover {
   vertical-align: top;
   padding: 0.4rem 0.55rem;
   border-bottom: 1px solid var(--border);
-  background: #fff;
+  background: var(--surface);
 }
 
 .network-headers-table-wrap .headers-table th {
   position: sticky;
   top: 0;
-  background: #f6f8fa;
+  background: var(--surface-muted);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   font-size: 0.7rem;
   text-transform: uppercase;

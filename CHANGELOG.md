@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Light / dark mode** toggle in the header (`ThemeProvider` + `ThemeToggle`): persists in `localStorage` (`url-checker-theme`), defaults to system preference, applies `data-theme` on `<html>` (FOUC-prevention script in `app/layout.tsx`).
 - Network **Remote IP** (`remoteIp` / `remotePort` via `response.serverAddr()`) and **HTTP** (`httpVersion` via `response.httpVersion()`) columns.
 - Network row **Timing** tab: per-request Resource Timing (`request.timing()` → `timing`) plus page **Navigation Timing** on document rows (`navigationTiming` on the check result).
 - Timing tab **waterfall graph** (`components/TimingWaterfall.tsx`): stacked + per-phase bars for Resource timing; Navigation waterfall on document rows; **Queueing / stalled** segments fill timeline gaps (documented in README).
