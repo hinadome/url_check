@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Network **Remote IP** (`remoteIp` / `remotePort` via `response.serverAddr()`) and **HTTP** (`httpVersion` via `response.httpVersion()`) columns.
 - Network row **Timing** tab: per-request Resource Timing (`request.timing()` → `timing`) plus page **Navigation Timing** on document rows (`navigationTiming` on the check result).
-- Timing tab **waterfall graph** (`components/TimingWaterfall.tsx`): stacked + per-phase bars for Resource timing; Navigation waterfall on document rows.
+- Timing tab **waterfall graph** (`components/TimingWaterfall.tsx`): stacked + per-phase bars for Resource timing; Navigation waterfall on document rows; **Queueing / stalled** segments fill timeline gaps (documented in README).
 - **Date** column on Network requests (`date` ISO timestamp when each response was observed; rows sorted chronologically).
 - Network requests panel **Expand width** / **Collapse width** control for near-full viewport width.
 - Network panel default layout **breaks out** of the main form column (wider than 960px) so the table has room to breathe.
@@ -39,9 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Screenshot (PNG)**, **HTML source**
   - **Network CSV (index)** — metadata columns only (includes remote IP / HTTP version; no header maps, bodies, or full timing maps)
 - Deploy configs for **Vercel** (`vercel.json`) and **Netlify** (`netlify.toml`) with Next.js native hosting; README documents Playwright serverless limits
-- **VM** and **container** deploy scripts plus [`DEPLOYMENT.md`](DEPLOYMENT.md): `scripts/deploy-vm.sh`, `scripts/deploy-container.sh`, `Dockerfile`, `docker-compose.yml`, `deploy/url-checker.service`
+- **VM** and **container** deploy scripts plus [`DEPLOYMENT.md`](DEPLOYMENT.md): `scripts/deploy-vm.sh`, `scripts/deploy-container.sh`, `Dockerfile`, `docker-compose.yml`, `deploy/url-checker.service`, `deploy/nginx-url-checker.conf`
 - GitHub Actions **manual** SSH VM deploy: [`.github/workflows/deploy-vm-ssh.yml`](.github/workflows/deploy-vm-ssh.yml) (`workflow_dispatch` only); optional `VM_APP_URL` secret
 - VM deploy script avoids OOM during `npm ci` by skipping Playwright postinstall / browser download, installing Chromium separately, and optionally enabling swap on low-RAM hosts
+- VM **nginx** front proxy (default on full systemd deploy): public HTTP (`NGINX_PORT`, default 80) → `127.0.0.1:$PORT`; `--no-nginx` to expose the app directly; env knobs `SERVER_NAME`, `CLIENT_MAX_BODY`, `PROXY_READ_TIMEOUT`
 
 ### Changed
 
@@ -53,12 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Network requests **URL** column is plain text (not a link); full value still available via `title` on hover.
 - Timing tab **Name** column uses a wider wrapping layout so long labels are fully visible.
 - Deploy scripts accept optional **`APP_URL`** as either `http://` or `https://`; container health probe tries local HTTP then HTTPS (and optional `APP_URL`).
-- VM deploy installs **nginx** as an HTTP front proxy by default (`deploy/nginx-url-checker.conf`); app binds to `127.0.0.1`; skip with `--no-nginx`.
+- VM deploy installs **nginx** as an HTTP front proxy by default (`deploy/nginx-url-checker.conf`); app binds to `127.0.0.1` via systemd `-H`; skip with `--no-nginx`.
 
 ### Documentation
 
-- `README.md` — [Network requests panel](README.md#network-requests-panel), [Headers display (tabs)](README.md#headers-display-tabs), [Content tab](README.md#content-tab-network-rows-only), [Timing tab](README.md#timing-tab-network-rows-only) / [Resource timing](README.md#resource-timing) / [Navigation timing](README.md#navigation-timing), [Resource summary vs Network requests](README.md#resource-summary-vs-network-requests), [Export](README.md#export) (JSON keeps timing), and [Deployment](README.md#deployment-vercel--netlify).
-- [`DEPLOYMENT.md`](DEPLOYMENT.md) — detailed VM vs container deploy scripts and operations; manual GitHub Actions SSH deploy; `APP_URL` / `VM_APP_URL`; nginx front proxy on VM.
+- `README.md` — [Network requests panel](README.md#network-requests-panel), [Headers display (tabs)](README.md#headers-display-tabs), [Content tab](README.md#content-tab-network-rows-only), [Timing tab](README.md#timing-tab-network-rows-only) / [Resource timing](README.md#resource-timing) (phase fields, derived DNS/TCP/TTFB, waterfall + **Queueing / stalled** / white-space explanation) / [Navigation timing](README.md#navigation-timing), [Resource summary vs Network requests](README.md#resource-summary-vs-network-requests), [Export](README.md#export) (JSON keeps timing; CSV is metadata index), and [Deployment](README.md#deployment-vercel--netlify).
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) — detailed VM vs container deploy scripts and operations; manual GitHub Actions SSH deploy; `APP_URL` / `VM_APP_URL`; nginx front proxy on VM (`NGINX_PORT`, `--no-nginx`, TLS via certbot/LB).
 - `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.
 
 ---

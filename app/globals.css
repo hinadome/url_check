@@ -787,6 +787,16 @@ a:hover {
   background: #3f5f8a;
 }
 
+.timing-bar--queue {
+  background: repeating-linear-gradient(
+    -45deg,
+    #b8c0c8,
+    #b8c0c8 3px,
+    #9aa3ab 3px,
+    #9aa3ab 6px
+  );
+}
+
 .timing-bar--dom {
   background: #5a7a4a;
 }

@@ -17,6 +17,54 @@ function isValidRange(start: number, end: number): boolean {
   return start >= 0 && end >= 0 && end >= start;
 }
 
+/** Ignore sub-ms float noise when detecting gaps. */
+const MIN_QUEUE_GAP_MS = 0.05;
+
+/**
+ * Insert DevTools-style "Queueing / stalled" segments for uncovered time on
+ * the 0 → totalMs scale (before first phase, between phases, after last).
+ */
+export function fillQueueingGaps(
+  phases: WaterfallPhase[],
+  totalMs: number,
+): WaterfallPhase[] {
+  if (phases.length === 0) return phases;
+
+  const sorted = [...phases].sort(
+    (a, b) => a.start - b.start || a.end - b.end,
+  );
+  const filled: WaterfallPhase[] = [];
+  let cursor = 0;
+  let gapIndex = 0;
+
+  const pushGap = (start: number, end: number) => {
+    if (end - start < MIN_QUEUE_GAP_MS) return;
+    filled.push({
+      key: `queue-${gapIndex}`,
+      label: "Queueing / stalled",
+      start,
+      end,
+      colorClass: "timing-bar--queue",
+    });
+    gapIndex += 1;
+  };
+
+  for (const phase of sorted) {
+    if (phase.start > cursor) {
+      pushGap(cursor, phase.start);
+    }
+    filled.push(phase);
+    cursor = Math.max(cursor, phase.end);
+  }
+
+  const scaleEnd = totalMs >= 0 ? Math.max(totalMs, cursor) : cursor;
+  if (scaleEnd > cursor) {
+    pushGap(cursor, scaleEnd);
+  }
+
+  return filled;
+}
+
 export function buildResourceWaterfallPhases(
   timing: ResourceTiming,
 ): WaterfallPhase[] {
@@ -205,6 +253,15 @@ export function TimingWaterfall({
   }
 
   const total = scaleEnd(phases, totalMs);
+  const displayPhases = fillQueueingGaps(phases, total);
+
+  const legendPhases: WaterfallPhase[] = [];
+  const seenLabels = new Set<string>();
+  for (const phase of displayPhases) {
+    if (seenLabels.has(phase.label)) continue;
+    seenLabels.add(phase.label);
+    legendPhases.push(phase);
+  }
 
   return (
     <div className="timing-waterfall" aria-label={title}>
@@ -215,9 +272,9 @@ export function TimingWaterfall({
         </span>
       </div>
 
-      <div className="timing-waterfall-stacked" aria-hidden={false}>
+      <div className="timing-waterfall-stacked">
         <div className="timing-waterfall-track timing-waterfall-track--stacked">
-          {phases.map((phase) => {
+          {displayPhases.map((phase) => {
             const left = (phase.start / total) * 100;
             const width = Math.max(
               ((phase.end - phase.start) / total) * 100,
@@ -236,8 +293,8 @@ export function TimingWaterfall({
       </div>
 
       <ul className="timing-waterfall-legend">
-        {phases.map((phase) => (
-          <li key={`legend-${phase.key}`}>
+        {legendPhases.map((phase) => (
+          <li key={`legend-${phase.label}`}>
             <span
               className={`timing-waterfall-swatch ${phase.colorClass}`}
               aria-hidden
@@ -248,7 +305,7 @@ export function TimingWaterfall({
       </ul>
 
       <div className="timing-waterfall-rows">
-        {phases.map((phase) => {
+        {displayPhases.map((phase) => {
           const left = (phase.start / total) * 100;
           const width = Math.max(
             ((phase.end - phase.start) / total) * 100,

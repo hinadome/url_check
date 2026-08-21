@@ -365,11 +365,23 @@ startTime
 Above the Resource timing table, the UI draws a DevTools-style waterfall (`components/TimingWaterfall.tsx`):
 
 - **Stacked bar** — all phases on one timeline (0 → `responseEnd` or the latest phase end)
-- **Per-phase rows** — DNS, Connect, TLS (when present), Waiting (TTFB), Content download, with duration labels
+- **Per-phase rows** — DNS, Connect, TLS (when present), Waiting (TTFB), Content download, plus **Queueing / stalled** for gaps
 - Phases with `-1` / missing ranges are omitted
 - Zero-length phases render as a thin marker
 
 Document rows also get a **Navigation waterfall** (DNS → load event) above the Navigation timing table.
+
+**Why the waterfall used to show “white space” (and what we draw now)**
+
+The scale is always **0 → `responseEnd`**. Colored segments are only the classified phases (DNS, Connect/TLS, Waiting, Download). Time that is **not** covered by those ranges is real timeline, not a CSS bug:
+
+| Cause | What you see |
+|-------|----------------|
+| **Queueing / stall gaps** | Common gap between `connectEnd` and `requestStart` (browser queueing / stalled). Chrome DevTools labels this similarly. |
+| **Missing early phases (`-1`)** | On connection reuse, DNS and Connect are often omitted; the first bar may start at `requestStart` ≫ 0, leaving empty time on the left. |
+| **Scale starts at 0** | Mapping always begins at 0, not at the first known phase, so early uncovered time stays on the left of the track. |
+
+The UI now fills those uncovered intervals with a hatched **Queueing / stalled** segment (before the first phase, between phases, and after the last phase up to the scale end), so the stacked bar looks continuous while still calling out unclassified time.
 
 **Why some values are —**
 
