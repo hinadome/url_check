@@ -705,10 +705,12 @@ url_checker/
 │   └── validate.ts           # URL / header / DNS override guards
 ├── scripts/
 │   ├── deploy-vm.sh          # VM install/build/systemd (optional APP_URL)
+│   ├── setup-https.sh        # Post-deploy Let's Encrypt + nginx HTTPS (domain arg)
 │   └── deploy-container.sh   # Docker Compose build/up (optional APP_URL)
 ├── deploy/
 │   ├── url-checker.service   # systemd unit template
-│   └── nginx-url-checker.conf # nginx reverse-proxy site template
+│   ├── nginx-url-checker.conf # nginx HTTP reverse-proxy template
+│   └── nginx-url-checker-https.conf # nginx HTTPS + redirect template
 ├── .github/workflows/
 │   └── deploy-vm-ssh.yml     # Manual SSH VM deploy
 ├── Dockerfile

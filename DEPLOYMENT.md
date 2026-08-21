@@ -13,6 +13,8 @@ Related files:
 |------|---------|
 | [`deploy/url-checker.service`](deploy/url-checker.service) | systemd unit template used by the VM script |
 | [`deploy/nginx-url-checker.conf`](deploy/nginx-url-checker.conf) | nginx reverse-proxy site template (HTTP front → Next.js) |
+| [`deploy/nginx-url-checker-https.conf`](deploy/nginx-url-checker-https.conf) | nginx HTTPS site template (TLS + HTTP→HTTPS redirect) |
+| [`scripts/setup-https.sh`](scripts/setup-https.sh) | Post-deploy Let's Encrypt cert + HTTPS nginx config (domain required) |
 | [`Dockerfile`](Dockerfile) | Production image (Playwright base + Next.js) |
 | [`docker-compose.yml`](docker-compose.yml) | One-service Compose stack (`shm_size` for Chromium) |
 | [`vercel.json`](vercel.json) / [`netlify.toml`](netlify.toml) | Optional serverless UI hosting (Playwright often unreliable) |
@@ -123,12 +125,55 @@ sudo systemctl reload nginx
 curl -sI "http://127.0.0.1:${NGINX_PORT:-80}/"
 ```
 
-**HTTPS:** the script configures **HTTP** nginx only. Terminate TLS on nginx (e.g. `certbot --nginx -d your.domain`) or a cloud load balancer, then set `APP_URL=https://your.domain`.
+**HTTPS:** after HTTP deploy, run [`scripts/setup-https.sh`](scripts/setup-https.sh) with your domain (Let's Encrypt + nginx 443). Or terminate TLS on a cloud load balancer and set `APP_URL=https://your.domain`.
 
 Skip nginx entirely:
 
 ```bash
 ./scripts/deploy-vm.sh --no-nginx
+```
+
+### HTTPS with Let's Encrypt (`setup-https.sh`)
+
+Run **after** a successful VM deploy with nginx. The domain's DNS must already point at this VM; ports **80** and **443** must be open.
+
+```bash
+cd /path/to/url_checker
+chmod +x scripts/setup-https.sh
+
+# Domain is required; email for Let's Encrypt registration
+./scripts/setup-https.sh checker.example.com --email ops@example.com
+# or: CERTBOT_EMAIL=ops@example.com ./scripts/setup-https.sh checker.example.com
+
+# Optional: staging CA (untrusted test certs)
+./scripts/setup-https.sh checker.example.com --email ops@example.com --staging
+
+# Force renew / replace cert
+./scripts/setup-https.sh checker.example.com --email ops@example.com --force-renew
+```
+
+What it does:
+
+1. Installs `certbot` + `python3-certbot-nginx` (and nginx if missing).
+2. Writes an HTTP site with `server_name=<domain>` and an ACME webroot at `/var/www/certbot`.
+3. Obtains a certificate via `certbot certonly --webroot` for that domain.
+4. Installs [`deploy/nginx-url-checker-https.conf`](deploy/nginx-url-checker-https.conf): **443 SSL** reverse proxy + **80 → HTTPS** redirect (ACME path kept on :80).
+5. Adds a certbot deploy hook to `reload nginx` and enables `certbot.timer` when available.
+
+| Variable / flag | Default | Meaning |
+|-----------------|---------|---------|
+| domain (positional) | _(required)_ | Certificate / nginx `server_name` |
+| `--email` / `CERTBOT_EMAIL` | _(required for new certs)_ | Let's Encrypt account email |
+| `--staging` | off | Use Let's Encrypt staging |
+| `--force-renew` | off | Force certificate renewal |
+| `PORT` | `3000` | Upstream Next.js port (`127.0.0.1`) |
+| `APP_NAME` | `url-checker` | nginx site filename |
+| `CLIENT_MAX_BODY` | `50m` | nginx body size |
+| `PROXY_READ_TIMEOUT` | `120s` | nginx proxy timeouts |
+
+```bash
+curl -sI "https://checker.example.com/"
+sudo certbot renew --dry-run
 ```
 
 ### Verify
@@ -329,7 +374,7 @@ git checkout <ref>
 ## Security reminders
 
 - Do not expose an open checker to the public internet without auth and rate limits (SSRF risk even with current guards).
-- VM deploy installs **nginx on port 80** by default and binds the app to localhost; add TLS (certbot / LB) before production use.
+- VM deploy installs **nginx on port 80** by default and binds the app to localhost; enable TLS with [`scripts/setup-https.sh`](scripts/setup-https.sh) `<domain>` (or a cloud LB) before production use.
 - Keep Playwright / base image versions updated with dependency upgrades.
 
 ---

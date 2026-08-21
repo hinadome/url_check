@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions **manual** SSH VM deploy: [`.github/workflows/deploy-vm-ssh.yml`](.github/workflows/deploy-vm-ssh.yml) (`workflow_dispatch` only); optional `VM_APP_URL` secret
 - VM deploy script avoids OOM during `npm ci` by skipping Playwright postinstall / browser download, installing Chromium separately, and optionally enabling swap on low-RAM hosts
 - VM **nginx** front proxy (default on full systemd deploy): public HTTP (`NGINX_PORT`, default 80) → `127.0.0.1:$PORT`; `--no-nginx` to expose the app directly; env knobs `SERVER_NAME`, `CLIENT_MAX_BODY`, `PROXY_READ_TIMEOUT`
+- Post-deploy **HTTPS** script [`scripts/setup-https.sh`](scripts/setup-https.sh): domain parameter + Let's Encrypt (`certbot`) + nginx TLS site from [`deploy/nginx-url-checker-https.conf`](deploy/nginx-url-checker-https.conf) (HTTP→HTTPS redirect, renewal hook)
 
 ### Changed
 
@@ -60,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - `README.md` — [Network requests panel](README.md#network-requests-panel), [Headers display (tabs)](README.md#headers-display-tabs), [Content tab](README.md#content-tab-network-rows-only), [Timing tab](README.md#timing-tab-network-rows-only) / [Resource timing](README.md#resource-timing) (phase fields, derived DNS/TCP/TTFB, waterfall + **Queueing / stalled** / white-space explanation) / [Navigation timing](README.md#navigation-timing), [Resource summary vs Network requests](README.md#resource-summary-vs-network-requests), [Export](README.md#export) (JSON keeps timing; CSV is metadata index), and [Deployment](README.md#deployment-vercel--netlify).
-- [`DEPLOYMENT.md`](DEPLOYMENT.md) — detailed VM vs container deploy scripts and operations; manual GitHub Actions SSH deploy; `APP_URL` / `VM_APP_URL`; nginx front proxy on VM (`NGINX_PORT`, `--no-nginx`, TLS via certbot/LB).
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) — detailed VM vs container deploy scripts and operations; manual GitHub Actions SSH deploy; `APP_URL` / `VM_APP_URL`; nginx front proxy on VM (`NGINX_PORT`, `--no-nginx`, TLS via [`scripts/setup-https.sh`](scripts/setup-https.sh) or LB).
 - `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.
 
 ---

@@ -307,7 +307,7 @@ configure_nginx() {
   run_root systemctl restart nginx
   run_root systemctl --no-pager --full status nginx || true
   log "nginx is fronting the app on port ${NGINX_PORT}"
-  log "For HTTPS: put TLS on nginx (e.g. certbot --nginx) or a cloud LB; APP_URL can be https://"
+  log "For HTTPS: ./scripts/setup-https.sh <domain> --email you@example.com"
 }
 
 start_foreground() {
