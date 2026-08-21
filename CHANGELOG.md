@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - URL cells wrap with `overflow-wrap`; host and content-type use ellipsis; date and short columns stay nowrap.
 - Horizontal + vertical scroll on the network table wrapper when content overflows.
 - Network requests **URL** column is plain text (not a link); full value still available via `title` on hover.
+- Deploy scripts accept optional **`APP_URL`** as either `http://` or `https://`; container health probe tries local HTTP then HTTPS (and optional `APP_URL`).
 
 ### Documentation
 

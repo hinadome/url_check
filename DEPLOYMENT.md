@@ -60,6 +60,9 @@ chmod +x scripts/deploy-vm.sh
 # Custom port / service user
 PORT=8080 APP_USER=ubuntu ./scripts/deploy-vm.sh
 
+# Public URL hint after deploy (http or https)
+APP_URL=https://checker.example.com ./scripts/deploy-vm.sh
+
 # Install and build only (no service start)
 ./scripts/deploy-vm.sh --build-only
 
@@ -72,6 +75,7 @@ PORT=8080 APP_USER=ubuntu ./scripts/deploy-vm.sh
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `PORT` | `3000` | Listen port for `next start` / systemd |
+| `APP_URL` | _(empty)_ | Optional public origin to print after deploy; must be `http://` or `https://` |
 | `APP_USER` | current user | systemd `User=` |
 | `APP_NAME` | `url-checker` | systemd unit name (`url-checker.service`) |
 | `NODE_MAJOR` | `20` | Minimum / install major Node version |
@@ -93,6 +97,8 @@ Unit template placeholders replaced at install time: `__APP_DIR__`, `__APP_USER_
 
 ```bash
 curl -sI "http://127.0.0.1:${PORT:-3000}/"
+# If TLS terminates on the same host/port (or via APP_URL):
+# curl -skI "https://127.0.0.1:${PORT:-3000}/"
 # Open UI, run a check against https://example.com
 ```
 
@@ -115,7 +121,7 @@ curl -sI "http://127.0.0.1:${PORT:-3000}/"
 1. Checks for `docker` and `docker compose` (or `docker-compose`).
 2. Builds the image from [`Dockerfile`](Dockerfile) (Playwright `noble` image + `npm ci` + `next build`).
 3. Starts Compose service `url-checker` detached (`up -d --build`).
-4. Waits until `http://127.0.0.1:$PORT/` responds (or prints log hints).
+4. Waits until the app responds over **HTTP or HTTPS** on `127.0.0.1:$PORT` (or optional `APP_URL`), or prints log hints.
 
 Supporting Compose settings:
 
@@ -141,6 +147,9 @@ chmod +x scripts/deploy-container.sh
 
 # Custom host port
 PORT=8080 ./scripts/deploy-container.sh
+
+# Public URL for health hint / optional probe (http or https)
+APP_URL=https://checker.example.com ./scripts/deploy-container.sh
 
 # Force clean rebuild
 ./scripts/deploy-container.sh --build
@@ -171,6 +180,7 @@ docker compose down
 
 ```bash
 curl -sI "http://127.0.0.1:${PORT:-3000}/"
+# or: curl -skI "https://127.0.0.1:${PORT:-3000}/"
 docker compose ps
 docker compose logs --tail=100 url-checker
 ```
@@ -241,6 +251,7 @@ Settings → Secrets and variables → Actions → **New repository secret**:
 | `VM_SSH_PORT` | No | SSH port (default **22** if unset/empty) |
 | `VM_APP_PORT` | No | App `PORT` for `deploy-vm.sh` (default **3000**) |
 | `VM_APP_USER` | No | systemd service user (`APP_USER`); defaults to SSH user on the script side if empty |
+| `VM_APP_URL` | No | Optional `APP_URL` for `deploy-vm.sh` (`http://` or `https://` public origin) |
 
 Use a **dedicated deploy key** with the least privilege needed (repo read on the VM clone remote; SSH login limited to deploy).
 

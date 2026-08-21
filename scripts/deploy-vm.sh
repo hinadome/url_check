@@ -5,12 +5,14 @@
 #   ./scripts/deploy-vm.sh --build-only # install + build, do not (re)start service
 #   ./scripts/deploy-vm.sh --no-systemd # run `npm start` in foreground instead of systemd
 #   PORT=3000 APP_USER=ubuntu ./scripts/deploy-vm.sh
+#   APP_URL=https://checker.example.com ./scripts/deploy-vm.sh
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 PORT="${PORT:-3000}"
+APP_URL="${APP_URL:-}"
 APP_NAME="${APP_NAME:-url-checker}"
 APP_USER="${APP_USER:-$(id -un)}"
 NODE_MAJOR="${NODE_MAJOR:-20}"
@@ -21,6 +23,25 @@ UNIT_TEMPLATE="${ROOT_DIR}/deploy/url-checker.service"
 
 log() { printf '[deploy-vm] %s\n' "$*"; }
 die() { printf '[deploy-vm] ERROR: %s\n' "$*" >&2; exit 1; }
+
+# Optional public URL printed after deploy (http:// or https://).
+validate_app_url() {
+  if [[ -z "$APP_URL" ]]; then
+    return
+  fi
+  case "$APP_URL" in
+    http://*|https://*) ;;
+    *) die "APP_URL must start with http:// or https:// (got: ${APP_URL})" ;;
+  esac
+}
+
+open_hint() {
+  if [[ -n "$APP_URL" ]]; then
+    printf '%s' "$APP_URL"
+  else
+    printf 'http://<vm-host>:%s (or https:// via reverse proxy / TLS terminator)' "$PORT"
+  fi
+}
 
 # Optional: create a small swapfile when RAM is very low (helps npm/Playwright survive).
 # Set ENSURE_SWAP=0 to disable. Default size 2G.
@@ -214,8 +235,12 @@ start_foreground() {
 }
 
 main() {
+  validate_app_url
   log "Root: ${ROOT_DIR}"
   log "User: ${APP_USER}  Port: ${PORT}"
+  if [[ -n "$APP_URL" ]]; then
+    log "APP_URL: ${APP_URL}"
+  fi
 
   install_os_packages
   install_node_if_needed
@@ -234,7 +259,7 @@ main() {
 
   if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
     write_systemd_unit
-    log "Done. Open http://<vm-host>:${PORT}"
+    log "Done. Open $(open_hint)"
   else
     log "systemd not available — falling back to foreground start"
     start_foreground
