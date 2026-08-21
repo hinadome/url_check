@@ -690,7 +690,8 @@ url_checker/
 │   ├── deploy-vm.sh          # VM install/build/systemd (optional APP_URL)
 │   └── deploy-container.sh   # Docker Compose build/up (optional APP_URL)
 ├── deploy/
-│   └── url-checker.service   # systemd unit template
+│   ├── url-checker.service   # systemd unit template
+│   └── nginx-url-checker.conf # nginx reverse-proxy site template
 ├── .github/workflows/
 │   └── deploy-vm-ssh.yml     # Manual SSH VM deploy
 ├── Dockerfile

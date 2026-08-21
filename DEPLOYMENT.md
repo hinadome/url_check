@@ -12,6 +12,7 @@ Related files:
 | File | Purpose |
 |------|---------|
 | [`deploy/url-checker.service`](deploy/url-checker.service) | systemd unit template used by the VM script |
+| [`deploy/nginx-url-checker.conf`](deploy/nginx-url-checker.conf) | nginx reverse-proxy site template (HTTP front → Next.js) |
 | [`Dockerfile`](Dockerfile) | Production image (Playwright base + Next.js) |
 | [`docker-compose.yml`](docker-compose.yml) | One-service Compose stack (`shm_size` for Chromium) |
 | [`vercel.json`](vercel.json) / [`netlify.toml`](netlify.toml) | Optional serverless UI hosting (Playwright often unreliable) |
@@ -32,15 +33,17 @@ Related files:
 
 ### What the script does
 
-1. Installs base OS packages via `apt-get` when available (`curl`, `git`, `build-essential`, …).
+1. Installs base OS packages via `apt-get` when available (`curl`, `git`, `build-essential`, and **nginx** unless `--no-nginx`).
 2. Ensures **Node.js ≥ 20** (installs NodeSource Node 20.x if needed).
 3. Runs `npm ci --ignore-scripts` with Playwright browser download skipped (avoids OOM on small VMs).
 4. Installs Playwright Chromium OS deps, then downloads Chromium in a separate step.
 5. Runs `npm run build` (with a capped Node heap by default).
 6. Unless `--build-only` / `--no-systemd`:
    - Writes `/etc/systemd/system/url-checker.service` from [`deploy/url-checker.service`](deploy/url-checker.service)
-   - `daemon-reload`, `enable`, `restart`
-   - Or falls back to foreground `npm start` if systemd is missing
+   - When nginx is enabled (default): Next.js binds to **`127.0.0.1:$PORT`** only
+   - Installs nginx site from [`deploy/nginx-url-checker.conf`](deploy/nginx-url-checker.conf) → proxies public HTTP → the app
+   - `daemon-reload`, `enable`, `restart` for the app (and nginx)
+   - Or falls back to foreground `npm start` if systemd is missing (nginx skipped)
 
 ### Requirements
 
@@ -54,19 +57,22 @@ Related files:
 cd /path/to/url_checker
 chmod +x scripts/deploy-vm.sh
 
-# Full deploy: build + systemd service on port 3000
+# Full deploy: build + systemd + nginx on port 80 → app on 3000
 ./scripts/deploy-vm.sh
 
 # Custom port / service user
 PORT=8080 APP_USER=ubuntu ./scripts/deploy-vm.sh
 
-# Public URL hint after deploy (http or https)
+# Public URL hint + nginx server_name from host
 APP_URL=https://checker.example.com ./scripts/deploy-vm.sh
+
+# Skip nginx (expose Next.js directly on PORT)
+./scripts/deploy-vm.sh --no-nginx
 
 # Install and build only (no service start)
 ./scripts/deploy-vm.sh --build-only
 
-# Skip systemd; run Next in the foreground
+# Skip systemd; run Next in the foreground (nginx not installed)
 ./scripts/deploy-vm.sh --no-systemd
 ```
 
@@ -74,10 +80,14 @@ APP_URL=https://checker.example.com ./scripts/deploy-vm.sh
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `PORT` | `3000` | Listen port for `next start` / systemd |
-| `APP_URL` | _(empty)_ | Optional public origin to print after deploy; must be `http://` or `https://` |
+| `PORT` | `3000` | Listen port for `next start` / systemd (loopback when nginx is on) |
+| `APP_URL` | _(empty)_ | Optional public origin to print after deploy; must be `http://` or `https://`; host used as nginx `server_name` when `SERVER_NAME` unset |
+| `SERVER_NAME` | host of `APP_URL`, else `_` | nginx `server_name` |
+| `NGINX_PORT` | `80` | Public HTTP port nginx listens on |
+| `CLIENT_MAX_BODY` | `50m` | nginx `client_max_body_size` (large JSON / uploads) |
+| `PROXY_READ_TIMEOUT` | `120s` | nginx `proxy_read_timeout` / `proxy_send_timeout` (Playwright checks) |
 | `APP_USER` | current user | systemd `User=` |
-| `APP_NAME` | `url-checker` | systemd unit name (`url-checker.service`) |
+| `APP_NAME` | `url-checker` | systemd unit + nginx site name |
 | `NODE_MAJOR` | `20` | Minimum / install major Node version |
 | `ENSURE_SWAP` | `1` | Auto-create/enable ~2G swap when RAM < 2 GB (`0` to disable) |
 | `SWAP_SIZE` | `2G` | Size passed to `fallocate` when creating swap |
@@ -91,14 +101,43 @@ sudo systemctl restart url-checker
 sudo journalctl -u url-checker -f
 ```
 
-Unit template placeholders replaced at install time: `__APP_DIR__`, `__APP_USER__`, `__PORT__`, `__NODE_BIN__`.
+Unit template placeholders replaced at install time: `__APP_DIR__`, `__APP_USER__`, `__PORT__`, `__HOST__`, `__NODE_BIN__`.
+
+### nginx front proxy (default)
+
+By default the VM script installs **nginx** as the public HTTP front door and keeps Next.js on localhost only.
+
+| Piece | Path / behavior |
+|-------|-----------------|
+| Template | [`deploy/nginx-url-checker.conf`](deploy/nginx-url-checker.conf) |
+| Installed site | `/etc/nginx/sites-available/url-checker.conf` (symlinked into `sites-enabled`) |
+| Upstream | `http://127.0.0.1:$PORT` |
+| Public listen | `$NGINX_PORT` (default **80**) |
+| App bind | `127.0.0.1:$PORT` when nginx is enabled; `0.0.0.0:$PORT` with `--no-nginx` |
+| Default site | Disabled if present (avoids fighting for port 80) |
+
+```bash
+sudo nginx -t
+sudo systemctl status nginx
+sudo systemctl reload nginx
+curl -sI "http://127.0.0.1:${NGINX_PORT:-80}/"
+```
+
+**HTTPS:** the script configures **HTTP** nginx only. Terminate TLS on nginx (e.g. `certbot --nginx -d your.domain`) or a cloud load balancer, then set `APP_URL=https://your.domain`.
+
+Skip nginx entirely:
+
+```bash
+./scripts/deploy-vm.sh --no-nginx
+```
 
 ### Verify
 
 ```bash
+# Via nginx (default deploy)
+curl -sI "http://127.0.0.1:${NGINX_PORT:-80}/"
+# Direct to the app (loopback when nginx is on)
 curl -sI "http://127.0.0.1:${PORT:-3000}/"
-# If TLS terminates on the same host/port (or via APP_URL):
-# curl -skI "https://127.0.0.1:${PORT:-3000}/"
 # Open UI, run a check against https://example.com
 ```
 
@@ -111,6 +150,8 @@ curl -sI "http://127.0.0.1:${PORT:-3000}/"
 | Service exits immediately | `journalctl -u url-checker -e`; confirm `WorkingDirectory` and Node path |
 | Checks timeout / OOM | Add RAM; lower concurrent use; ensure `/dev/shm` is reasonably sized |
 | Port in use | `PORT=8080 ./scripts/deploy-vm.sh` or change existing service |
+| nginx fails `nginx -t` / port 80 busy | `sudo nginx -t`; stop other web servers; or `NGINX_PORT=8080 ./scripts/deploy-vm.sh`; or `--no-nginx` |
+| App reachable on :3000 but not :80 | Check `systemctl status nginx`; firewall/security group must allow **80** (and **443** after certbot) |
 
 ---
 
@@ -288,7 +329,7 @@ git checkout <ref>
 ## Security reminders
 
 - Do not expose an open checker to the public internet without auth and rate limits (SSRF risk even with current guards).
-- Put TLS termination (nginx, Caddy, cloud LB) in front of port 3000 in production.
+- VM deploy installs **nginx on port 80** by default and binds the app to localhost; add TLS (certbot / LB) before production use.
 - Keep Playwright / base image versions updated with dependency upgrades.
 
 ---

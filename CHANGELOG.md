@@ -53,11 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Network requests **URL** column is plain text (not a link); full value still available via `title` on hover.
 - Timing tab **Name** column uses a wider wrapping layout so long labels are fully visible.
 - Deploy scripts accept optional **`APP_URL`** as either `http://` or `https://`; container health probe tries local HTTP then HTTPS (and optional `APP_URL`).
+- VM deploy installs **nginx** as an HTTP front proxy by default (`deploy/nginx-url-checker.conf`); app binds to `127.0.0.1`; skip with `--no-nginx`.
 
 ### Documentation
 
 - `README.md` — [Network requests panel](README.md#network-requests-panel), [Headers display (tabs)](README.md#headers-display-tabs), [Content tab](README.md#content-tab-network-rows-only), [Timing tab](README.md#timing-tab-network-rows-only) / [Resource timing](README.md#resource-timing) / [Navigation timing](README.md#navigation-timing), [Resource summary vs Network requests](README.md#resource-summary-vs-network-requests), [Export](README.md#export) (JSON keeps timing), and [Deployment](README.md#deployment-vercel--netlify).
-- [`DEPLOYMENT.md`](DEPLOYMENT.md) — detailed VM vs container deploy scripts and operations; manual GitHub Actions SSH deploy; `APP_URL` / `VM_APP_URL`.
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) — detailed VM vs container deploy scripts and operations; manual GitHub Actions SSH deploy; `APP_URL` / `VM_APP_URL`; nginx front proxy on VM.
 - `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.
 
 ---
