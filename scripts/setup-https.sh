@@ -103,14 +103,57 @@ install_packages() {
     die "apt-get not found — this script targets Ubuntu/Debian"
   fi
 
-  log "Installing nginx + certbot (if needed)"
+  local pkgs=(certbot python3-certbot-nginx)
+  if command -v nginx >/dev/null 2>&1; then
+    log "nginx already installed — leaving global nginx install/config alone"
+  else
+    pkgs+=(nginx)
+  fi
+  log "Installing packages if needed: ${pkgs[*]}"
   run_root apt-get update -y
-  run_root apt-get install -y nginx certbot python3-certbot-nginx
+  run_root apt-get install -y "${pkgs[@]}"
+}
+
+nginx_upstream_name() {
+  local base
+  base="$(printf '%s' "${APP_NAME}" | tr -c 'A-Za-z0-9_' '_')"
+  base="$(printf '%s' "$base" | sed 's/^_*//;s/_*$//')"
+  printf '%s_upstream' "${base:-url_checker}"
+}
+
+nginx_other_has_default_server() {
+  local hits
+  hits="$(
+    run_root bash -c '
+      shopt -s nullglob
+      for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+        [[ -e "$f" ]] || continue
+        base="$(basename "$f")"
+        [[ "$base" == "'"${APP_NAME}"'.conf" ]] && continue
+        if grep -Eq "listen[^;]*default_server" "$f" 2>/dev/null; then
+          echo "$f"
+        fi
+      done
+    ' 2>/dev/null || true
+  )"
+  [[ -n "$hits" ]]
 }
 
 ensure_http_site_for_acme() {
-  # Temporary HTTP-only site with correct server_name so certbot / ACME can succeed.
+  # HTTP site for this app only (ACME + proxy). Does not remove other sites.
+  local upstream listen_default
+  upstream="$(nginx_upstream_name)"
+  listen_default=""
+  if nginx_other_has_default_server; then
+    log "Another nginx site already uses default_server — not claiming it"
+  else
+    # Prefer Host-based routing; only use default_server when nothing else claims it
+    # and we need ACME probes on bare IP to succeed.
+    listen_default=" default_server"
+  fi
+
   log "Writing HTTP nginx site for ACME (server_name=${DOMAIN} → 127.0.0.1:${PORT})"
+  log "Other sites under /etc/nginx/sites-enabled/ are left in place"
   run_root mkdir -p "$WEBROOT"
 
   local tmp
@@ -121,10 +164,11 @@ ensure_http_site_for_acme() {
     -e "s|__APP_PORT__|${PORT}|g" \
     -e "s|__CLIENT_MAX_BODY__|${CLIENT_MAX_BODY}|g" \
     -e "s|__PROXY_READ_TIMEOUT__|${PROXY_READ_TIMEOUT}|g" \
+    -e "s|__LISTEN_DEFAULT__|${listen_default}|g" \
+    -e "s|__UPSTREAM_NAME__|${upstream}|g" \
     "$NGINX_HTTP_TEMPLATE" >"$tmp"
 
   # Append ACME webroot location before the closing brace of the server block
-  # by rewriting via a small python helper for reliability.
   python3 - "$tmp" "$WEBROOT" <<'PY'
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
@@ -138,7 +182,6 @@ snippet = f"""
     }}
 """
 if "acme-challenge" not in text:
-    # Insert before last closing brace of file
     idx = text.rfind("}")
     if idx < 0:
         raise SystemExit("nginx template has no closing brace")
@@ -146,29 +189,36 @@ if "acme-challenge" not in text:
     path.write_text(text)
 PY
 
+  if [[ -f "$NGINX_SITE_AVAILABLE" ]]; then
+    run_root cp -a "$NGINX_SITE_AVAILABLE" "${NGINX_SITE_AVAILABLE}.bak.$(date +%Y%m%d%H%M%S)" || true
+  fi
+
   run_root cp "$tmp" "$NGINX_SITE_AVAILABLE"
   run_root chmod 644 "$NGINX_SITE_AVAILABLE"
   rm -f "$tmp"
 
   run_root ln -sfn "$NGINX_SITE_AVAILABLE" "$NGINX_SITE_ENABLED"
-  if [[ -e /etc/nginx/sites-enabled/default ]]; then
-    log "Disabling nginx default site"
-    run_root rm -f /etc/nginx/sites-enabled/default
-  fi
+  # Do NOT remove /etc/nginx/sites-enabled/default or any other site
 
   run_root nginx -t
   run_root systemctl enable nginx
-  run_root systemctl reload nginx || run_root systemctl restart nginx
+  if systemctl is-active --quiet nginx; then
+    run_root systemctl reload nginx
+  else
+    run_root systemctl start nginx
+  fi
 
-  # Sanity: webroot must be writable for certbot (runs as root)
+  # Sanity: webroot must be reachable for certbot
   run_root mkdir -p "${WEBROOT}/.well-known/acme-challenge"
   run_root bash -c "echo ok > '${WEBROOT}/.well-known/acme-challenge/setup-https-probe'"
-  if ! curl -fsS "http://127.0.0.1/.well-known/acme-challenge/setup-https-probe" >/dev/null 2>&1; then
-    log "WARNING: local ACME probe failed via 127.0.0.1 — check nginx server_name / default_server"
-    log "  curl -v http://127.0.0.1/.well-known/acme-challenge/setup-https-probe"
-    log "  curl -v -H 'Host: ${DOMAIN}' http://127.0.0.1/.well-known/acme-challenge/setup-https-probe"
+  if curl -fsS -H "Host: ${DOMAIN}" \
+    "http://127.0.0.1/.well-known/acme-challenge/setup-https-probe" >/dev/null 2>&1; then
+    log "Local ACME webroot probe OK (Host: ${DOMAIN})"
+  elif curl -fsS "http://127.0.0.1/.well-known/acme-challenge/setup-https-probe" >/dev/null 2>&1; then
+    log "Local ACME webroot probe OK via default server"
   else
-    log "Local ACME webroot probe OK"
+    log "WARNING: local ACME probe failed — check server_name=${DOMAIN} and that this site is enabled"
+    log "  curl -v -H 'Host: ${DOMAIN}' http://127.0.0.1/.well-known/acme-challenge/setup-https-probe"
   fi
   run_root rm -f "${WEBROOT}/.well-known/acme-challenge/setup-https-probe"
 }
@@ -269,6 +319,15 @@ install_https_site() {
 
   log "Installing HTTPS nginx site (443 + HTTP→HTTPS redirect)"
   log "SSL cert: ${cert}"
+  log "Other nginx sites are not modified or removed"
+
+  local upstream listen_default
+  upstream="$(nginx_upstream_name)"
+  listen_default=""
+  if ! nginx_other_has_default_server; then
+    listen_default=" default_server"
+  fi
+
   local tmp
   tmp="$(mktemp)"
   sed \
@@ -278,7 +337,13 @@ install_https_site() {
     -e "s|__PROXY_READ_TIMEOUT__|${PROXY_READ_TIMEOUT}|g" \
     -e "s|__SSL_CERT__|${cert}|g" \
     -e "s|__SSL_KEY__|${key}|g" \
+    -e "s|__UPSTREAM_NAME__|${upstream}|g" \
+    -e "s|__LISTEN_DEFAULT__|${listen_default}|g" \
     "$NGINX_HTTPS_TEMPLATE" >"$tmp"
+
+  if [[ -f "$NGINX_SITE_AVAILABLE" ]]; then
+    run_root cp -a "$NGINX_SITE_AVAILABLE" "${NGINX_SITE_AVAILABLE}.bak.$(date +%Y%m%d%H%M%S)" || true
+  fi
 
   run_root cp "$tmp" "$NGINX_SITE_AVAILABLE"
   run_root chmod 644 "$NGINX_SITE_AVAILABLE"

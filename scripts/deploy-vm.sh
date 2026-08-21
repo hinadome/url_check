@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Deploy URL Checker on a Linux VM (Ubuntu/Debian-oriented).
+# Safe to re-run after pulling app updates: stops the unit (if active), rebuilds,
+# rewrites the systemd unit, restarts the app, and only touches this app's nginx site.
 # Usage:
 #   ./scripts/deploy-vm.sh              # install deps, build, systemd + nginx front proxy
 #   ./scripts/deploy-vm.sh --build-only # install + build, do not (re)start service
@@ -24,6 +26,8 @@ PROXY_READ_TIMEOUT="${PROXY_READ_TIMEOUT:-120s}"
 BUILD_ONLY=0
 NO_SYSTEMD=0
 WITH_NGINX=1
+# Set when this run installs the nginx package (safe to touch stock "default" site only then).
+NGINX_INSTALLED_THIS_RUN=0
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
 UNIT_TEMPLATE="${ROOT_DIR}/deploy/url-checker.service"
 NGINX_TEMPLATE="${ROOT_DIR}/deploy/nginx-url-checker.conf"
@@ -193,7 +197,12 @@ install_os_packages() {
 
   local pkgs=(ca-certificates curl git build-essential)
   if [[ "$WITH_NGINX" -eq 1 ]]; then
-    pkgs+=(nginx)
+    if command -v nginx >/dev/null 2>&1; then
+      log "nginx already installed ($(nginx -v 2>&1)) — will not reinstall; only managing ${APP_NAME} site"
+    else
+      pkgs+=(nginx)
+      NGINX_INSTALLED_THIS_RUN=1
+    fi
   fi
   log "Installing base OS packages: ${pkgs[*]}"
   run_root apt-get update -y
@@ -236,6 +245,20 @@ install_app() {
   npm run build
 }
 
+# Stop running unit before npm ci/build so node_modules/.next are not replaced underfoot.
+stop_app_for_update() {
+  if [[ "$BUILD_ONLY" -eq 1 || "$NO_SYSTEMD" -eq 1 ]]; then
+    return 0
+  fi
+  if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
+    return 0
+  fi
+  if systemctl is-active --quiet "${APP_NAME}.service" 2>/dev/null; then
+    log "Stopping ${APP_NAME}.service before rebuild (re-run / update)"
+    run_root systemctl stop "${APP_NAME}.service"
+  fi
+}
+
 write_systemd_unit() {
   [[ -f "$UNIT_TEMPLATE" ]] || die "Missing unit template: $UNIT_TEMPLATE"
 
@@ -269,19 +292,129 @@ write_systemd_unit() {
   log "Service ${APP_NAME}.service is enabled on ${host}:${PORT}"
 }
 
+# Unique upstream name so we do not clash with other nginx configs.
+nginx_upstream_name() {
+  local base
+  base="$(printf '%s' "${APP_NAME}" | tr -c 'A-Za-z0-9_' '_')"
+  base="$(printf '%s' "$base" | sed 's/^_*//;s/_*$//')"
+  printf '%s_upstream' "${base:-url_checker}"
+}
+
+# True if some *other* enabled site already claims default_server.
+nginx_other_has_default_server() {
+  local hits
+  hits="$(
+    run_root bash -c '
+      shopt -s nullglob
+      for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+        [[ -e "$f" ]] || continue
+        base="$(basename "$f")"
+        [[ "$base" == "'"${APP_NAME}"'.conf" ]] && continue
+        if grep -Eq "listen[^;]*default_server" "$f" 2>/dev/null; then
+          echo "$f"
+        fi
+      done
+    ' 2>/dev/null || true
+  )"
+  [[ -n "$hits" ]]
+}
+
+# Stock Ubuntu/Debian welcome site only — never remove custom sites.
+nginx_only_stock_default_claims_default_server() {
+  local hits
+  hits="$(
+    run_root bash -c '
+      shopt -s nullglob
+      for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+        [[ -e "$f" ]] || continue
+        base="$(basename "$f")"
+        [[ "$base" == "'"${APP_NAME}"'.conf" ]] && continue
+        if grep -Eq "listen[^;]*default_server" "$f" 2>/dev/null; then
+          echo "$base"
+        fi
+      done
+    ' 2>/dev/null || true
+  )"
+  [[ "$(printf '%s' "$hits" | tr '\n' ' ' | xargs)" == "default" ]]
+}
+
+# Disable stock default only on fresh nginx install, or when NGINX_DISABLE_DEFAULT=1.
+# Never touch default when nginx was already present (preserves existing setup).
+maybe_disable_stock_default_site() {
+  local force="${NGINX_DISABLE_DEFAULT:-}"
+  if [[ "$force" == "0" ]]; then
+    return 0
+  fi
+  if [[ ! -e /etc/nginx/sites-enabled/default ]]; then
+    return 0
+  fi
+  if [[ "$force" != "1" && "$NGINX_INSTALLED_THIS_RUN" -ne 1 ]]; then
+    log "Leaving /etc/nginx/sites-enabled/default in place (nginx was already installed)"
+    return 0
+  fi
+  if ! nginx_only_stock_default_claims_default_server; then
+    log "Not disabling default — other sites also use default_server"
+    return 0
+  fi
+  log "Disabling stock nginx default site only (fresh install or NGINX_DISABLE_DEFAULT=1)"
+  run_root rm -f /etc/nginx/sites-enabled/default
+}
+
+# True if our managed site file already has TLS (from setup-https.sh).
+nginx_site_has_ssl() {
+  [[ -f "$NGINX_SITE_AVAILABLE" ]] \
+    && run_root grep -Eq '^\s*ssl_certificate\s' "$NGINX_SITE_AVAILABLE" 2>/dev/null
+}
+
+reload_or_start_nginx() {
+  run_root nginx -t
+  run_root systemctl enable nginx
+  if systemctl is-active --quiet nginx; then
+    log "Reloading nginx (preserving other sites)"
+    run_root systemctl reload nginx
+  else
+    log "Starting nginx"
+    run_root systemctl start nginx
+  fi
+  run_root systemctl --no-pager --full status nginx || true
+}
+
 configure_nginx() {
   [[ "$WITH_NGINX" -eq 1 ]] || return 0
   [[ -f "$NGINX_TEMPLATE" ]] || die "Missing nginx template: $NGINX_TEMPLATE"
 
   if ! command -v nginx >/dev/null 2>&1; then
-    die "nginx not found after package install — install nginx or use --no-nginx"
+    die "nginx not found — install nginx or use --no-nginx"
   fi
 
-  local server_name
+  local server_name upstream listen_default
   server_name="$(resolve_server_name)"
-  log "Configuring nginx front proxy (listen :${NGINX_PORT}, server_name=${server_name} → 127.0.0.1:${PORT})"
+  upstream="$(nginx_upstream_name)"
 
-  local tmp
+  maybe_disable_stock_default_site
+
+  # Never claim default_server if another enabled site already has it.
+  listen_default=""
+  if nginx_other_has_default_server; then
+    log "Another nginx site already uses default_server — not claiming it for ${APP_NAME}"
+  elif [[ "$server_name" == "_" ]]; then
+    listen_default=" default_server"
+    log "No other default_server found; using default_server for catch-all (_)"
+  else
+    log "Using server_name=${server_name} without default_server (shared nginx safe)"
+  fi
+
+  if nginx_site_has_ssl; then
+    log "Existing ${NGINX_SITE_AVAILABLE} has SSL — leaving site file unchanged (use setup-https.sh to refresh TLS)"
+    run_root ln -sfn "$NGINX_SITE_AVAILABLE" "$NGINX_SITE_ENABLED"
+    reload_or_start_nginx
+    log "nginx: ${APP_NAME} site enabled; other sites untouched"
+    return 0
+  fi
+
+  log "Other sites under /etc/nginx/sites-enabled/ are not modified or removed"
+
+  local tmp site_changed=1
   tmp="$(mktemp)"
   sed \
     -e "s|__SERVER_NAME__|${server_name}|g" \
@@ -289,24 +422,37 @@ configure_nginx() {
     -e "s|__APP_PORT__|${PORT}|g" \
     -e "s|__CLIENT_MAX_BODY__|${CLIENT_MAX_BODY}|g" \
     -e "s|__PROXY_READ_TIMEOUT__|${PROXY_READ_TIMEOUT}|g" \
+    -e "s|__LISTEN_DEFAULT__|${listen_default}|g" \
+    -e "s|__UPSTREAM_NAME__|${upstream}|g" \
     "$NGINX_TEMPLATE" >"$tmp"
 
-  run_root cp "$tmp" "$NGINX_SITE_AVAILABLE"
-  run_root chmod 644 "$NGINX_SITE_AVAILABLE"
+  if [[ -f "$NGINX_SITE_AVAILABLE" ]] && run_root cmp -s "$tmp" "$NGINX_SITE_AVAILABLE"; then
+    log "nginx site ${NGINX_SITE_AVAILABLE} unchanged — skip rewrite"
+    site_changed=0
+  else
+    log "Writing nginx site ${NGINX_SITE_AVAILABLE} (listen :${NGINX_PORT}, server_name=${server_name} → 127.0.0.1:${PORT})"
+    # Backup previous managed site only (never touch other configs)
+    if [[ -f "$NGINX_SITE_AVAILABLE" ]]; then
+      run_root cp -a "$NGINX_SITE_AVAILABLE" "${NGINX_SITE_AVAILABLE}.bak.$(date +%Y%m%d%H%M%S)" || true
+    fi
+    run_root cp "$tmp" "$NGINX_SITE_AVAILABLE"
+    run_root chmod 644 "$NGINX_SITE_AVAILABLE"
+  fi
   rm -f "$tmp"
 
-  # Enable site; remove default site if it would steal port 80
+  # Enable only our site symlink — do NOT remove default or any other site
   run_root ln -sfn "$NGINX_SITE_AVAILABLE" "$NGINX_SITE_ENABLED"
-  if [[ -e /etc/nginx/sites-enabled/default ]]; then
-    log "Disabling nginx default site (avoids conflict on port ${NGINX_PORT})"
-    run_root rm -f /etc/nginx/sites-enabled/default
+
+  if [[ "$site_changed" -eq 1 ]] || ! systemctl is-active --quiet nginx; then
+    reload_or_start_nginx
+  else
+    log "nginx already active; site unchanged — no reload"
   fi
 
-  run_root nginx -t
-  run_root systemctl enable nginx
-  run_root systemctl restart nginx
-  run_root systemctl --no-pager --full status nginx || true
-  log "nginx is fronting the app on port ${NGINX_PORT}"
+  log "nginx is proxying ${APP_NAME} on port ${NGINX_PORT} (server_name=${server_name})"
+  if [[ "$server_name" == "_" ]] && nginx_other_has_default_server; then
+    log "WARNING: server_name=_ without default_server may not receive traffic; set SERVER_NAME or APP_URL to your hostname"
+  fi
   log "For HTTPS: ./scripts/setup-https.sh <domain> --email you@example.com"
 }
 
@@ -328,10 +474,11 @@ main() {
   install_os_packages
   install_node_if_needed
   ensure_swap_if_needed
+  stop_app_for_update
   install_app
 
   if [[ "$BUILD_ONLY" -eq 1 ]]; then
-    log "Build-only complete. Start later with: PORT=${PORT} npm start"
+    log "Build-only complete. Start later with: sudo systemctl start ${APP_NAME}.service  (or PORT=${PORT} npm start)"
     exit 0
   fi
 

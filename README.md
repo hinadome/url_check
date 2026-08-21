@@ -16,7 +16,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 6. [User interface](#user-interface) (includes [Resource summary vs Network requests](#resource-summary-vs-network-requests), [Plain text and non-HTML responses](#plain-text-and-non-html-responses))
 7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only), [Timing tab](#timing-tab-network-rows-only) / [Resource timing](#resource-timing) / [Navigation timing](#navigation-timing))
 8. [Export](#export)
-9. [Deployment (Vercel / Netlify)](#deployment-vercel--netlify) — prefer VM/container: [DEPLOYMENT.md](DEPLOYMENT.md)
+9. [Deployment (Vercel / Netlify)](#deployment-vercel--netlify) — prefer VM/container ([re-runnable `deploy-vm.sh`](#vm-deploy-recommended-for-playwright)); details: [DEPLOYMENT.md](DEPLOYMENT.md)
 10. [API reference](#api-reference)
 11. [Project structure](#project-structure)
 12. [Getting started](#getting-started)
@@ -527,6 +527,28 @@ Filenames look like `url-checker-example.com-20260820-143005-light.json`.
 
 For **production Playwright checks**, use a **VM or container** instead — see **[DEPLOYMENT.md](DEPLOYMENT.md)** (`scripts/deploy-vm.sh`, `scripts/deploy-container.sh`). Manual GitHub Actions SSH deploy to a VM is documented there as well (`workflow_dispatch` only).
 
+### VM deploy (recommended for Playwright)
+
+```bash
+# First install or later app update (after git pull) — same command
+./scripts/deploy-vm.sh
+```
+
+`deploy-vm.sh` is **safe to re-run** when the backend/app is updated:
+
+- Stops the `url-checker` systemd unit if running, then `npm ci` + Chromium install + `npm run build`, then restarts the unit
+- Installs **nginx** only if missing; manages **only** this app’s site (`/etc/nginx/sites-available/url-checker.conf`)
+- Does **not** remove other nginx sites; preserves HTTPS configs written by `setup-https.sh`
+- Skips rewriting the HTTP nginx site when the rendered config is unchanged
+
+HTTPS (after DNS points at the VM):
+
+```bash
+./scripts/setup-https.sh checker.example.com --email ops@example.com
+```
+
+Full options, env vars, and troubleshooting: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+
 This app is **Next.js** (not TanStack/Nitro). Vercel/Netlify configs below are for optional UI hosting only.
 
 | Platform | Config | Notes |
@@ -731,12 +753,12 @@ url_checker/
 │   ├── types.ts              # Shared request/response types
 │   └── validate.ts           # URL / header / DNS override guards
 ├── scripts/
-│   ├── deploy-vm.sh          # VM install/build/systemd (optional APP_URL)
+│   ├── deploy-vm.sh          # VM install/build/systemd; re-runnable for updates
 │   ├── setup-https.sh        # Post-deploy Let's Encrypt + nginx HTTPS (domain arg)
 │   └── deploy-container.sh   # Docker Compose build/up (optional APP_URL)
 ├── deploy/
 │   ├── url-checker.service   # systemd unit template
-│   ├── nginx-url-checker.conf # nginx HTTP reverse-proxy template
+│   ├── nginx-url-checker.conf # nginx HTTP reverse-proxy template (shared-host safe)
 │   └── nginx-url-checker-https.conf # nginx HTTPS + redirect template
 ├── .github/workflows/
 │   └── deploy-vm-ssh.yml     # Manual SSH VM deploy

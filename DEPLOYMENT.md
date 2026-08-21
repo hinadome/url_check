@@ -35,7 +35,7 @@ Related files:
 
 ### What the script does
 
-1. Installs base OS packages via `apt-get` when available (`curl`, `git`, `build-essential`, and **nginx** unless `--no-nginx`).
+1. Installs base OS packages via `apt-get` when available (`curl`, `git`, `build-essential`; **nginx** only if missing and not `--no-nginx`).
 2. Ensures **Node.js ≥ 20** (installs NodeSource Node 20.x if needed).
 3. Runs `npm ci --ignore-scripts` with Playwright browser download skipped (avoids OOM on small VMs).
 4. Installs Playwright Chromium OS deps, then downloads Chromium in a separate step.
@@ -43,9 +43,19 @@ Related files:
 6. Unless `--build-only` / `--no-systemd`:
    - Writes `/etc/systemd/system/url-checker.service` from [`deploy/url-checker.service`](deploy/url-checker.service)
    - When nginx is enabled (default): Next.js binds to **`127.0.0.1:$PORT`** only
-   - Installs nginx site from [`deploy/nginx-url-checker.conf`](deploy/nginx-url-checker.conf) → proxies public HTTP → the app
-   - `daemon-reload`, `enable`, `restart` for the app (and nginx)
+   - Writes/updates **only** `/etc/nginx/sites-available/url-checker.conf` (does not remove other sites)
+   - Reloads nginx when already running; restarts the app unit
    - Or falls back to foreground `npm start` if systemd is missing (nginx skipped)
+
+### Updating the app (re-run)
+
+After `git pull` (or your usual sync), re-run the same script on the VM:
+
+```bash
+./scripts/deploy-vm.sh
+```
+
+That path is idempotent for updates: stops `url-checker` if running, runs `npm ci` + Playwright Chromium install + `npm run build`, rewrites/restarts the systemd unit, and leaves other nginx sites alone (skips rewriting this app’s site when unchanged; preserves HTTPS site files from `setup-https.sh`).
 
 ### Requirements
 
@@ -107,16 +117,25 @@ Unit template placeholders replaced at install time: `__APP_DIR__`, `__APP_USER_
 
 ### nginx front proxy (default)
 
-By default the VM script installs **nginx** as the public HTTP front door and keeps Next.js on localhost only.
+By default the VM script installs **nginx** only if it is missing, then manages **only** the URL Checker site file. Existing sites under `/etc/nginx/sites-enabled/` are **not** removed (including `default`).
 
 | Piece | Path / behavior |
 |-------|-----------------|
 | Template | [`deploy/nginx-url-checker.conf`](deploy/nginx-url-checker.conf) |
-| Installed site | `/etc/nginx/sites-available/url-checker.conf` (symlinked into `sites-enabled`) |
-| Upstream | `http://127.0.0.1:$PORT` |
+| Managed site | `/etc/nginx/sites-available/url-checker.conf` → symlink in `sites-enabled` |
+| Upstream | `http://127.0.0.1:$PORT` (unique upstream name derived from `APP_NAME`) |
 | Public listen | `$NGINX_PORT` (default **80**) |
+| `default_server` | Used only when no other enabled site already claims it **and** `server_name` is `_` |
+| Stock `default` site | Left alone if nginx was already installed; disabled only on a **fresh** nginx install by this script (or `NGINX_DISABLE_DEFAULT=1`) |
 | App bind | `127.0.0.1:$PORT` when nginx is enabled; `0.0.0.0:$PORT` with `--no-nginx` |
-| Default site | Disabled if present (avoids fighting for port 80) |
+| Existing TLS site | If our site file already has `ssl_certificate`, deploy **leaves it unchanged** (refresh via `setup-https.sh`) |
+| Reload | `nginx -t` + `systemctl reload` when nginx is already running (not a full restart) |
+
+On shared hosts, set an explicit hostname so Host-based routing works:
+
+```bash
+SERVER_NAME=checker.example.com APP_URL=https://checker.example.com ./scripts/deploy-vm.sh
+```
 
 ```bash
 sudo nginx -t
