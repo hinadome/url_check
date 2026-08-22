@@ -9,6 +9,7 @@ export type UrlFormSubmit = {
   headers: HeaderPair[];
   dnsOverride?: DnsOverride;
   ignoreCertErrors: boolean;
+  captureHar: boolean;
 };
 
 type UrlFormProps = {
@@ -22,6 +23,7 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
   const [dnsHost, setDnsHost] = useState("");
   const [dnsIp, setDnsIp] = useState("");
   const [ignoreCertErrors, setIgnoreCertErrors] = useState(false);
+  const [captureHar, setCaptureHar] = useState(false);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -49,6 +51,7 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
       headers: headers.filter((h) => h.name.trim()),
       dnsOverride,
       ignoreCertErrors,
+      captureHar,
     });
   };
 
@@ -98,6 +101,8 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
         </div>
       </fieldset>
 
+      <HeaderEditor headers={headers} onChange={setHeaders} disabled={loading} />
+
       <label className="field-checkbox">
         <input
           type="checkbox"
@@ -115,7 +120,22 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
         </span>
       </label>
 
-      <HeaderEditor headers={headers} onChange={setHeaders} disabled={loading} />
+      <label className="field-checkbox">
+        <input
+          type="checkbox"
+          checked={captureHar}
+          onChange={(e) => setCaptureHar(e.target.checked)}
+          disabled={loading}
+        />
+        <span>
+          Capture HAR
+          <span className="muted field-checkbox-hint">
+            {" "}
+            — record the Playwright session as a HAR file for download after the
+            check (not stored on the server)
+          </span>
+        </span>
+      </label>
 
       <button type="submit" className="btn btn-primary" disabled={loading}>
         {loading ? "Checking…" : "Check URL"}

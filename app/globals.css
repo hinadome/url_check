@@ -21,6 +21,9 @@
   --info-bg: #ddf4ff;
   --info-border: #54aeff;
   --info-fg: #0a3069;
+  --warning-bg: #fff8c5;
+  --warning-border: #d4a72c;
+  --warning-fg: #7d4e00;
   --error-bg: #ffebe9;
   --focus: #0969da;
   --row-open-bg: #eef2f6;
@@ -52,6 +55,9 @@
     --info-bg: #0c2d6b;
     --info-border: #388bfd;
     --info-fg: #b6d0ff;
+    --warning-bg: #3d2e00;
+    --warning-border: #d4a72c;
+    --warning-fg: #ffe8a3;
     --error-bg: #3d1214;
     --focus: #4493f8;
     --row-open-bg: #1c2128;
@@ -82,6 +88,9 @@
   --info-bg: #0c2d6b;
   --info-border: #388bfd;
   --info-fg: #b6d0ff;
+  --warning-bg: #3d2e00;
+  --warning-border: #d4a72c;
+  --warning-fg: #ffe8a3;
   --error-bg: #3d1214;
   --focus: #4493f8;
   --row-open-bg: #1c2128;
@@ -344,6 +353,21 @@ a:hover {
   color: var(--info-fg);
 }
 
+.alert-warning {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--warning-fg);
+}
+
+.meta-har-error {
+  color: var(--warning-fg);
+}
+
+.export-menu-item-error {
+  color: var(--warning-fg);
+  white-space: normal;
+}
+
 .results {
   display: flex;
   flex-direction: column;
@@ -370,6 +394,21 @@ a:hover {
   gap: 0.75rem 1.25rem;
   min-width: 0;
   flex: 1;
+}
+
+.link-button {
+  font: inherit;
+  color: var(--accent, var(--primary));
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.link-button:hover {
+  opacity: 0.85;
 }
 
 .export-menu {

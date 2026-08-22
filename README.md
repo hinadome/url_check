@@ -15,7 +15,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 5. [How content is stored](#how-content-is-stored)
 6. [User interface](#user-interface) (includes [Resource summary vs Network requests](#resource-summary-vs-network-requests), [Plain text and non-HTML responses](#plain-text-and-non-html-responses))
 7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only), [Timing tab](#timing-tab-network-rows-only) / [Resource timing](#resource-timing) / [Navigation timing](#navigation-timing))
-8. [Export](#export)
+8. [Export](#export) (includes [HAR capture](#har-capture-playwright-session-archive))
 9. [Deployment (Vercel / Netlify)](#deployment-vercel--netlify) — prefer VM/container ([re-runnable `deploy-vm.sh`](#vm-deploy-recommended-for-playwright)); details: [DEPLOYMENT.md](DEPLOYMENT.md)
 10. [API reference](#api-reference)
 11. [Project structure](#project-structure)
@@ -32,7 +32,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 
 URL Checker is a single-page tool plus one server API:
 
-1. The user submits a URL, optional custom HTTP headers, an optional DNS override (hostname → IP), and optionally **Ignore certificate errors**.
+1. The user submits a URL, optional custom HTTP headers, an optional DNS override (hostname → IP), and optionally **Ignore certificate errors** / **Capture HAR**.
 2. The server validates input (including SSRF guards), then launches Playwright Chromium.
 3. If a DNS override is set, Chromium is started with `--host-resolver-rules=MAP <host> <ip>`.
 4. The browser navigates to the URL (`waitUntil: "load"`, plus a short best-effort `networkidle` wait). When ignore-cert is on, the context uses `ignoreHTTPSErrors: true`.
@@ -56,13 +56,14 @@ Typical uses:
 | Custom headers | Add/remove name–value pairs sent with the Playwright request context |
 | Force DNS | Optional hostname → IP map via Chromium `--host-resolver-rules` |
 | Ignore cert errors | Optional checkbox (default **off**); Playwright `ignoreHTTPSErrors` for self-signed / expired TLS |
-| Status / meta | Final URL, HTTP status, timing, applied DNS override, TLS ignore flag when used |
+| Capture HAR | Optional checkbox (default **off**); Playwright `recordHar` → downloadable HAR after the check (not stored on the server) |
+| Status / meta | Final URL, HTTP status, timing, DNS override, TLS ignore / HAR download (or HAR size warning) when used |
 | Theme | Light / dark mode toggle (persisted in `localStorage`; follows system preference on first visit; no blocking theme `<script>`) |
 | HTTP headers | Main-document request/response headers via **Request** / **Response** tabs |
 | Resource summary | Links, images, stylesheets, scripts, iframes, other URLs from the live DOM |
 | Full content | Screenshot, sandboxed HTML preview, plain-text HTML source |
 | Network log | Date-stamped, filterable table with Remote IP + HTTP version; expandable rows with Request / Response / Content / Timing tabs |
-| Export | Client-side downloads: JSON (light/full), PNG, HTML, network CSV index |
+| Export | Client-side downloads: JSON (light/full), PNG, HTML, HAR (when captured), network CSV index |
 
 ---
 
@@ -70,7 +71,7 @@ Typical uses:
 
 ```text
 Browser UI (React)
-    │  POST /api/check  { url, headers?, dnsOverride?, ignoreCertErrors? }
+    │  POST /api/check  { url, headers?, dnsOverride?, ignoreCertErrors?, captureHar? }
     ▼
 Next.js API route (Node.js)
     │  validate URL + headers + DNS override (SSRF guards)
@@ -78,9 +79,10 @@ Next.js API route (Node.js)
 Playwright Chromium
     │  optional: --host-resolver-rules=MAP host ip
     │  optional: ignoreHTTPSErrors
+    │  optional: recordHar → ephemeral temp file → response field `har`
     │  goto → capture HTML, screenshot, headers, DOM resources, network
     ▼
-JSON response → React state → UI panels
+JSON response → React state → UI panels (+ client HAR download)
 ```
 
 ### Request lifecycle
@@ -90,15 +92,16 @@ JSON response → React state → UI panels
    - Allows only `http`/`https`, blocks private/localhost targets, filters unsafe headers.
    - Validates optional `dnsOverride` (public IP; host must match URL hostname).
    - When a valid override is present, **skips Node DNS lookup** for the URL host (traffic will use the forced IP in Chromium).
-3. **Fetch** — `lib/playwright-fetch.ts` launches Chromium per request (with host-resolver args when overriding), applies `extraHTTPHeaders`, sets `ignoreHTTPSErrors` when requested, navigates with `waitUntil: "load"`, then optionally waits up to a few seconds for `networkidle` (timeout ignored so busy sites still succeed).
+3. **Fetch** — `lib/playwright-fetch.ts` launches Chromium per request (with host-resolver args when overriding), applies `extraHTTPHeaders`, sets `ignoreHTTPSErrors` when requested, optionally enables Playwright `recordHar`, navigates with `waitUntil: "load"`, then optionally waits up to a few seconds for `networkidle` (timeout ignored so busy sites still succeed).
 4. **Capture** (in this order, after navigation + settle):
    1. Main document headers via Playwright `allHeaders()`
    2. `finalUrl`, `title`, then HTML via `page.content()`
    3. **Screenshot** via `page.screenshot({ fullPage: true, type: "png" })`
    4. DOM resource extraction (`lib/extract-resources.ts`)
    5. Flush network log (`lib/network-collector.ts`; responses were collected throughout the load via a `response` listener)
-5. **Respond** — JSON returned to the client (includes `dnsOverride` used or `null`, and `ignoreCertErrors`); browser and in-memory server objects are discarded when the handler finishes.
-6. **Render** — Client stores the payload in React state and renders panels.
+   6. Close browser context (flushes HAR to an OS temp file when `captureHar` was set); read HAR into the response or set `harError` if over the soft size limit; delete the temp dir
+5. **Respond** — JSON returned to the client (includes `dnsOverride`, `ignoreCertErrors`, `har` / `harError`); nothing is persisted to app storage or a database.
+6. **Render** — Client stores the payload in React state and renders panels; HAR download is client-side only when `har` is present.
 
 ### Screenshot timing
 
@@ -178,11 +181,11 @@ To proceed anyway (self-signed, expired, or name mismatch), check **Ignore certi
 ### Code map
 
 ```text
-components/UrlForm.tsx      → collect dnsHost / dnsIp / ignoreCertErrors
+components/UrlForm.tsx      → collect dnsHost / dnsIp / ignoreCertErrors / captureHar
 app/api/check/route.ts      → validateDnsOverride + validateUrl({ skipDnsLookup })
 lib/validate.ts             → validateDnsOverride(), validateUrl()
-lib/playwright-fetch.ts     → --host-resolver-rules=MAP …; ignoreHTTPSErrors
-lib/types.ts                → DnsOverride + ignoreCertErrors on CheckRequest / CheckResponse
+lib/playwright-fetch.ts     → --host-resolver-rules=MAP …; ignoreHTTPSErrors; recordHar
+lib/types.ts                → DnsOverride + ignoreCertErrors + captureHar / har / harError
 ```
 
 ---
@@ -208,8 +211,8 @@ Implications:
 Layout (top to bottom after a successful check):
 
 1. **Header** — product title and **Light / Dark** theme toggle (persisted).
-2. **Form** — URL, optional force DNS (host + IP), **Ignore certificate errors** (default off), custom header editor, submit.
-3. **Meta** — status, final URL, timing, DNS override / TLS ignore (when used), and **Export** menu.
+2. **Form** — URL, optional force DNS (host + IP), custom header editor, then **Ignore certificate errors** and **Capture HAR** (both default off), submit.
+3. **Meta** — status, final URL, timing, DNS override / TLS ignore / HAR download link (or HAR unavailable) when used, and **Export** menu. Oversized HAR shows a warning alert; page results still render.
 4. **HTTP headers** — main-document headers with **Request** / **Response** tabs (full-width table per tab).
 5. **Resource summary** — collapsible lists of URLs found in the rendered DOM.
 6. **Full content**
@@ -267,8 +270,8 @@ The **unique URLs** count on Resource summary and the **responses** count on Net
 Components live under `components/`:
 
 - `ThemeToggle.tsx` / `ThemeProvider.tsx` — light/dark mode (header toggle; `data-theme` on `<html>`)
-- `ExportMenu.tsx` — result export dropdown
-- `UrlForm.tsx` / `HeaderEditor.tsx` — input (DNS override, ignore cert errors, headers)
+- `ExportMenu.tsx` — result export dropdown (includes HAR when captured)
+- `UrlForm.tsx` / `HeaderEditor.tsx` — input (DNS override, custom headers, ignore cert errors, capture HAR)
 - `HeadersPanel.tsx` / `HeadersTabs.tsx` — main-document headers (Request / Response); network rows also Content / Timing
 - `ResourceSummary.tsx` — DOM resource lists
 - `ContentPreview.tsx` — screenshot / HTML / plain text tabs
@@ -515,15 +518,40 @@ After a successful check, use **Export** on the meta strip (`components/ExportMe
 
 | Menu item | File | Contents |
 |-----------|------|----------|
-| **JSON (light)** — recommended | `.json` | Full result shape; `screenshotBase64` cleared; network `body` cleared (`bodyEncoding: "empty"`). **Keeps** headers, resources, HTML, network metadata including `remoteIp` / `httpVersion` / `timing`, and top-level `navigationTiming` |
-| **JSON (full)** | `.json` | Complete `CheckResponse`: screenshot base64, network bodies, **and** all timing fields (`timing` per request + `navigationTiming`) |
+| **JSON (light)** — recommended | `.json` | Full result shape; `screenshotBase64` cleared; `har` cleared; network `body` cleared (`bodyEncoding: "empty"`). **Keeps** headers, resources, HTML, network metadata including `remoteIp` / `httpVersion` / `timing`, top-level `navigationTiming`, and `harError` if set |
+| **JSON (full)** | `.json` | Complete `CheckResponse`: screenshot base64, network bodies, HAR text when present, **and** all timing fields |
 | **Screenshot (PNG)** | `.png` | Decoded full-page screenshot (disabled if none) |
 | **HTML source** | `.html` | Captured HTML |
+| **HAR** | `.har` | Playwright session archive (HAR 1.2 JSON). Enabled only when **Capture HAR** was checked and the archive fit under the soft size limit |
 | **Network CSV (index)** | `.csv` | Metadata rows only: `date`, `url`, `host`, `remoteIp`, `remotePort`, `status`, `httpVersion`, `contentType`, `contentSize`, `resourceType`, `bodyEncoding`, `bodyTruncated`, `requestHeaderCount`, `responseHeaderCount` |
 
-**Design rule:** CSV is a spreadsheet-friendly **index**. Request/response header maps, body content, and full timing maps live in **JSON**, not CSV. HAR export is not in v1.
+**Design rule:** CSV is a spreadsheet-friendly **index**. Request/response header maps, body content, and full timing maps live in **JSON** or **HAR**, not CSV.
 
-Filenames look like `url-checker-example.com-20260820-143005-light.json`.
+Filenames look like `url-checker-example.com-20260820-143005-light.json` or `….har`.
+
+### HAR capture (Playwright session archive)
+
+Optional **Capture HAR** checkbox on the form (placed under **Custom headers**; default **off**).
+
+When checked:
+
+1. Playwright records the browser context with `recordHar: { mode: "full", content: "embed" }` into an **OS temp directory** (`os.tmpdir()`), not under the app tree.
+2. After capture, the context is closed (flushes the HAR), the file is sized/read into the API JSON field `har`, then the temp directory is **deleted**.
+3. The UI renders all normal results. If `har` is present, use **Download session HAR** on the meta strip or **Export → Download HAR**.
+
+**No server-side archive store:** HAR exists only in the HTTP response and browser memory (same model as the screenshot).
+
+#### Soft limit (`MAX_HAR_CHARS`)
+
+| Item | Detail |
+|------|--------|
+| **What** | Soft size cap on the HAR payload returned to the client |
+| **Default** | `25_000_000` (~25 MB; bytes on disk ≈ UTF-8 length for typical HAR JSON) |
+| **Where to change** | `MAX_HAR_CHARS` constant in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts) (near the top of the file, with other fetch limits) |
+| **If exceeded** | The **check still succeeds** and the UI still renders. `har` is `null`, `harError` explains that download is unavailable, and a warning appears above the result panels. Export → Download HAR stays disabled with that message. |
+| **Hard / practical ceilings** | Not a second app flag — Node heap, Playwright/V8 string size (~512 MB), browser RAM, and reverse-proxy buffering can still fail very large sessions even if you raise `MAX_HAR_CHARS`. |
+
+To raise or lower the soft limit, edit `MAX_HAR_CHARS` in `lib/playwright-fetch.ts` and rebuild/redeploy.
 
 ---
 
@@ -544,6 +572,7 @@ For **production Playwright checks**, use a **VM or container** instead — see 
 - Installs **nginx** only if missing; manages **only** this app’s site (`/etc/nginx/sites-available/url-checker.conf`)
 - Does **not** remove other nginx sites; preserves HTTPS configs written by `setup-https.sh`
 - Skips rewriting the HTTP nginx site when the rendered config is unchanged
+- Stock `sites-enabled/default`: see **[`NGINX_DISABLE_DEFAULT`](DEPLOYMENT.md#nginx_disable_default-stock-welcome-site-only)** in the deploy guide (not unlinked on shared hosts by default)
 
 HTTPS (after DNS points at the VM):
 
@@ -624,7 +653,8 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
     "host": "example.com",
     "ip": "203.0.113.10"
   },
-  "ignoreCertErrors": false
+  "ignoreCertErrors": false,
+  "captureHar": false
 }
 ```
 
@@ -634,6 +664,7 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
 | `headers` | `{ name, value }[]` | No | Extra headers applied to the Playwright browser context |
 | `dnsOverride` | `{ host, ip }` | No | Force Chromium to resolve `host` to `ip` (must match URL hostname; private IPs blocked) |
 | `ignoreCertErrors` | boolean | No | When `true`, Playwright context uses `ignoreHTTPSErrors` (self-signed / expired TLS). Default `false` / omitted |
+| `captureHar` | boolean | No | When `true`, record Playwright HAR for the session and return it in `har` (subject to soft size limit). Default `false` / omitted |
 
 #### Success response
 
@@ -703,6 +734,8 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
     "ip": "203.0.113.10"
   },
   "ignoreCertErrors": false,
+  "har": null,
+  "harError": null,
   "timingMs": 2100
 }
 ```
@@ -720,6 +753,8 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
 | `navigationTiming` | Page `PerformanceNavigationTiming` snapshot, or `null` |
 | `dnsOverride` | Applied force-resolve mapping, or `null` |
 | `ignoreCertErrors` | Whether this check used Playwright `ignoreHTTPSErrors` |
+| `har` | Full HAR 1.2 JSON text when `captureHar` succeeded within the soft size limit; otherwise `null` |
+| `harError` | Human-readable reason HAR download is unavailable (e.g. over `MAX_HAR_CHARS`); check still succeeds. `null` when HAR was not requested or was returned successfully |
 | `timingMs` | Server-side elapsed time for the check |
 | `error` | Present on failure responses |
 
@@ -752,7 +787,7 @@ url_checker/
 │   ├── TimingWaterfall.tsx   # Resource / Navigation timing waterfall graph
 │   ├── NetworkRequestsPanel.tsx
 │   ├── ResourceSummary.tsx
-│   └── UrlForm.tsx           # URL, DNS override, ignore cert errors, headers
+│   └── UrlForm.tsx           # URL, DNS, custom headers, ignore cert, capture HAR
 ├── lib/
 │   ├── export.ts             # Client-side export builders (JSON/PNG/HTML/CSV)
 │   ├── extract-resources.ts  # DOM URL extraction
@@ -841,6 +876,7 @@ Defined mainly in `lib/playwright-fetch.ts` and related libs:
 | Max HTML chars | 2,000,000 | Truncate oversized serialized HTML |
 | Max network entries | 2,000 | Cap collected responses |
 | Max network body bytes | 512,000 | Per-response body capture for Content tab (text or base64); truncated beyond this |
+| **`MAX_HAR_CHARS`** | **25,000,000** | Soft HAR size cap in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Over limit → `har: null` + `harError`; **page results still succeed**. See [HAR capture](#har-capture-playwright-session-archive). |
 | Content size | Prefer `Content-Length`; else response body length when available | Shown in network table |
 | DNS override | Chromium `--host-resolver-rules=MAP host ip` | Process-wide for that browser instance |
 | API `maxDuration` | 60s | Next.js route limit |
@@ -861,6 +897,7 @@ Built-in guards (v1):
 - Header name/value length and count limits.
 - Optional DNS override must use a **public** IP and a host that **matches** the URL hostname; Node DNS lookup is skipped only when a valid override is present (prevents using MAP to reach RFC1918 addresses).
 - **Ignore certificate errors** is **off** by default; enabling it only relaxes TLS verification inside Playwright (`ignoreHTTPSErrors`) and does not weaken SSRF / private-IP guards.
+- **Capture HAR** is **off** by default; when on, HAR is written only to an OS temp path during the check, returned in the API response, then deleted — not stored in the app directory or a database.
 - HTML preview uses an empty `sandbox` attribute so scripts do not execute in the UI.
 
 This is not a full multi-tenant hardening suite. Do not expose an open instance to the public internet without auth, rate limits, and further SSRF review.
@@ -877,7 +914,7 @@ This is not a full multi-tenant hardening suite. Do not expose an open instance 
 - Sites that block headless browsers, require interactive CAPTCHAs, or depend on special client TLS may fail or look incomplete.
 - DNS override maps a single exact hostname (no multi-host or wildcard UI yet).
 - Third-party hosts are never remapped by the DNS override.
-- Export is client-side only (no server archive store); Network CSV is a metadata index (no header/body cells); HAR not included in v1.
+- Export is client-side only (no server archive store); Network CSV is a metadata index (no header/body cells); HAR is optional via **Capture HAR** and subject to `MAX_HAR_CHARS` (see [HAR capture](#har-capture-playwright-session-archive)).
 - No PDF export or editable HTML workspace.
 - Resource summary unique-URL totals are not expected to equal Network request row counts (different sources; see [Resource summary vs Network requests](#resource-summary-vs-network-requests)).
 

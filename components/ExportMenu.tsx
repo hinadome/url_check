@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import {
+  exportHar,
   exportHtmlSource,
   exportJson,
   exportNetworkCsv,
@@ -18,6 +19,8 @@ export function ExportMenu({ result }: ExportMenuProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const hasScreenshot = Boolean(result.screenshotBase64);
+  const hasHar = Boolean(result.har);
+  const harError = result.harError ?? null;
 
   useEffect(() => {
     if (!open) return;
@@ -106,6 +109,28 @@ export function ExportMenu({ result }: ExportMenuProps) {
               onClick={() => run(() => exportHtmlSource(result))}
             >
               <span>Download HTML source</span>
+            </button>
+          </li>
+          <li role="none">
+            <button
+              type="button"
+              role="menuitem"
+              className="export-menu-item"
+              disabled={!hasHar}
+              onClick={() =>
+                run(() => {
+                  exportHar(result);
+                })
+              }
+            >
+              <span>Download HAR</span>
+              {hasHar ? (
+                <span className="muted">Playwright session archive (HAR 1.2)</span>
+              ) : harError ? (
+                <span className="muted export-menu-item-error">{harError}</span>
+              ) : (
+                <span className="muted">Enable “Capture HAR” on the form, then check again</span>
+              )}
             </button>
           </li>
           <li role="none">

@@ -43,6 +43,8 @@ export function toLightResult(result: CheckResponse): CheckResponse {
   return {
     ...result,
     screenshotBase64: "",
+    har: null,
+    // Keep harError so light exports still explain why HAR was omitted
     networkRequests: (result.networkRequests ?? []).map((entry) => ({
       ...entry,
       body: "",
@@ -50,6 +52,17 @@ export function toLightResult(result: CheckResponse): CheckResponse {
       bodyTruncated: false,
     })),
   };
+}
+
+/** Download Playwright HAR JSON when present on the check result (client-side only). */
+export function exportHar(result: CheckResponse): boolean {
+  const har = result.har;
+  if (!har) return false;
+  downloadBlob(
+    `${exportBasename(result)}.har`,
+    new Blob([har], { type: "application/json;charset=utf-8" }),
+  );
+  return true;
 }
 
 export function exportJson(

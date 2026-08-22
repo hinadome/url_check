@@ -8,6 +8,7 @@ import { NetworkRequestsPanel } from "@/components/NetworkRequestsPanel";
 import { ResourceSummary } from "@/components/ResourceSummary";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UrlForm, type UrlFormSubmit } from "@/components/UrlForm";
+import { exportHar } from "@/lib/export";
 import type { CheckResponse } from "@/lib/types";
 
 export default function Home() {
@@ -98,9 +99,32 @@ export default function Home() {
                   TLS: <strong>certificate errors ignored</strong>
                 </span>
               )}
+              {result.har && (
+                <span>
+                  HAR:{" "}
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => exportHar(result)}
+                  >
+                    Download session HAR
+                  </button>
+                </span>
+              )}
+              {result.harError && !result.har && (
+                <span className="meta-har-error">
+                  HAR: <strong>download unavailable</strong>
+                </span>
+              )}
             </div>
             <ExportMenu result={result} />
           </div>
+
+          {result.harError && !result.har && (
+            <div className="alert alert-warning" role="status">
+              {result.harError}
+            </div>
+          )}
 
           <HeadersPanel
             requestHeaders={result.requestHeaders ?? []}

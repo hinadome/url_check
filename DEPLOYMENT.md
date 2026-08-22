@@ -28,6 +28,8 @@ Related files:
 - Outbound network for `npm ci` and Playwright browser download (first install)
 - Open TCP port for the app (default **3000**)
 - Enough RAM for Chromium (recommend **≥ 2 GB** free; **4 GB+** preferred under load)
+- Writable OS temp (`os.tmpdir()`, usually `/tmp`) — used only while **Capture HAR** is on, then deleted
+- Extra RAM/headroom if users enable **Capture HAR** (HAR is returned in the `/api/check` JSON, up to ~25 MB plus screenshot and network bodies)
 
 ---
 
@@ -96,14 +98,15 @@ APP_URL=https://checker.example.com ./scripts/deploy-vm.sh
 | `APP_URL` | _(empty)_ | Optional public origin to print after deploy; must be `http://` or `https://`; host used as nginx `server_name` when `SERVER_NAME` unset |
 | `SERVER_NAME` | host of `APP_URL`, else `_` | nginx `server_name` |
 | `NGINX_PORT` | `80` | Public HTTP port nginx listens on |
-| `CLIENT_MAX_BODY` | `50m` | nginx `client_max_body_size` (large JSON / uploads) |
-| `PROXY_READ_TIMEOUT` | `120s` | nginx `proxy_read_timeout` / `proxy_send_timeout` (Playwright checks) |
+| `CLIENT_MAX_BODY` | `50m` | nginx `client_max_body_size` for **request** bodies (uploads). HAR/screenshot ride on the **JSON response**; templates already set `proxy_buffering off` |
+| `PROXY_READ_TIMEOUT` | `120s` | nginx `proxy_read_timeout` / `proxy_send_timeout` (Playwright checks, including HAR flush) |
+| `NGINX_DISABLE_DEFAULT` | _(unset)_ | `1` = disable stock `sites-enabled/default` even if nginx was already installed; `0` = never disable it. Default: disable stock default only on a **fresh** nginx install by this script |
 | `APP_USER` | current user | systemd `User=` |
 | `APP_NAME` | `url-checker` | systemd unit + nginx site name |
 | `NODE_MAJOR` | `20` | Minimum / install major Node version |
 | `ENSURE_SWAP` | `1` | Auto-create/enable ~2G swap when RAM < 2 GB (`0` to disable) |
 | `SWAP_SIZE` | `2G` | Size passed to `fallocate` when creating swap |
-| `NODE_MAX_OLD_SPACE_SIZE` | `1536` | Node heap cap for `next build` (MB) unless `NODE_OPTIONS` is already set |
+| `NODE_MAX_OLD_SPACE_SIZE` | `1536` | Node heap cap for `next build` (MB) unless `NODE_OPTIONS` is already set (does **not** apply to the running systemd unit) |
 
 ### systemd lifecycle
 
@@ -137,6 +140,34 @@ On shared hosts, set an explicit hostname so Host-based routing works:
 SERVER_NAME=checker.example.com APP_URL=https://checker.example.com ./scripts/deploy-vm.sh
 ```
 
+#### `NGINX_DISABLE_DEFAULT` (stock welcome site only)
+
+This env var only controls whether deploy may **unlink the stock Ubuntu/Debian welcome site** at `/etc/nginx/sites-enabled/default`. It never deletes custom sites.
+
+**Why:** a fresh `apt install nginx` enables `default` with `listen … default_server`. That vhost is the catch-all for unmatched Host headers (including a bare IP). Two `default_server`s on the same port fail `nginx -t`. The old script always removed `default`, which could break other sites on a shared VM.
+
+**When the stock symlink is removed** (`maybe_disable_stock_default_site` in [`scripts/deploy-vm.sh`](scripts/deploy-vm.sh)):
+
+| `NGINX_DISABLE_DEFAULT` | Effect |
+|-------------------------|--------|
+| unset (default) | Unlink stock `default` **only if this run just installed nginx**, and **only if** that file is the sole other `default_server` |
+| `1` | Same unlink even if nginx was already installed (dedicated box: you want IP/port 80 → URL Checker) |
+| `0` | Never unlink `default` |
+
+It still **refuses** if some other enabled site (not stock `default`) already has `default_server`.
+
+After that, the URL Checker site adds `default_server` only when nothing else has it **and** `server_name` is `_`. If another site owns `default_server`, this app is Host-based only — set `SERVER_NAME` or `APP_URL`.
+
+```bash
+# Dedicated box, nginx already present, take over port 80 catch-all
+NGINX_DISABLE_DEFAULT=1 ./scripts/deploy-vm.sh
+
+# Shared host — never touch default; route by hostname
+NGINX_DISABLE_DEFAULT=0 SERVER_NAME=checker.example.com ./scripts/deploy-vm.sh
+```
+
+Leave it unset on a new VM: first deploy installs nginx and disables stock `default`; later re-runs leave other sites alone.
+
 ```bash
 sudo nginx -t
 sudo systemctl status nginx
@@ -145,6 +176,19 @@ curl -sI "http://127.0.0.1:${NGINX_PORT:-80}/"
 ```
 
 **HTTPS:** after HTTP deploy, run [`scripts/setup-https.sh`](scripts/setup-https.sh) with your domain (Let's Encrypt + nginx 443). Or terminate TLS on a cloud load balancer and set `APP_URL=https://your.domain`.
+
+### App features that affect the host (HAR, TLS ignore)
+
+These are **runtime UI/API options**, not extra deploy flags. After you re-run `deploy-vm.sh` (or rebuild the container), they are available with no further script changes.
+
+| Feature | Deploy / ops impact |
+|---------|---------------------|
+| **Ignore certificate errors** | No extra packages. Playwright `ignoreHTTPSErrors` for that check only. Default **off**. |
+| **Capture HAR** | Playwright `recordHar` writes an ephemeral file under OS temp (`url-checker-har-*`), reads it into the JSON response, then **deletes** the directory. Nothing is stored under the app tree or a database. |
+| HAR soft limit | `MAX_HAR_CHARS` = `25_000_000` in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Over that, the **check still succeeds**; `har` is omitted and the UI shows `harError`. Raise the constant and rebuild to change it. |
+| Large JSON | A successful check with HAR can be tens of MB (HAR + screenshot + network bodies). nginx site templates stream the upstream (`proxy_buffering off`). If you raise `MAX_HAR_CHARS` a lot, also watch Node heap, `/tmp` space, and reverse-proxy idle timeouts. |
+
+Details: [README — HAR capture](README.md#har-capture-playwright-session-archive).
 
 Skip nginx entirely:
 
@@ -173,10 +217,10 @@ chmod +x scripts/setup-https.sh
 
 What it does:
 
-1. Installs `certbot` + `python3-certbot-nginx` (and nginx if missing).
-2. Writes an HTTP site with `server_name=<domain>` and an ACME webroot at `/var/www/certbot`.
+1. Installs `certbot` + `python3-certbot-nginx` (and nginx **only if missing**).
+2. Writes **this app’s** HTTP site (`${APP_NAME}.conf`) with `server_name=<domain>` and an ACME webroot at `/var/www/certbot`. Other `sites-enabled` entries are **not** removed.
 3. Obtains a certificate via `certbot certonly --webroot` for that domain.
-4. Installs [`deploy/nginx-url-checker-https.conf`](deploy/nginx-url-checker-https.conf): **443 SSL** reverse proxy + **80 → HTTPS** redirect (ACME path kept on :80).
+4. Installs [`deploy/nginx-url-checker-https.conf`](deploy/nginx-url-checker-https.conf): **443 SSL** reverse proxy + **80 → HTTPS** redirect (ACME path kept on :80). Avoids claiming `default_server` if another site already has it.
 5. Adds a certbot deploy hook to `reload nginx` and enables `certbot.timer` when available.
 
 | Variable / flag | Default | Meaning |
@@ -217,6 +261,9 @@ curl -sI "http://127.0.0.1:${PORT:-3000}/"
 | nginx fails `nginx -t` / port 80 busy | `sudo nginx -t`; stop other web servers; or `NGINX_PORT=8080 ./scripts/deploy-vm.sh`; or `--no-nginx` |
 | App reachable on :3000 but not :80 | Check `systemctl status nginx`; firewall/security group must allow **80** (and **443** after certbot) |
 | `setup-https` “Certificate not found after certbot” | Often a **false negative**: `/etc/letsencrypt/live` is root-only, so a non-root `test -f` fails. Current script checks with `sudo`. Re-pull and re-run. Also verify: `sudo ls -la /etc/letsencrypt/live/`, `sudo certbot certificates`, DNS A record, port 80 from the internet, and ACME path `http://<domain>/.well-known/acme-challenge/` |
+| Check works but **HAR download unavailable** | Expected when the archive exceeds `MAX_HAR_CHARS` (~25 MB) — page results still render. Confirm `/tmp` is writable and has free space (`df -h /tmp`). Raise the constant in `lib/playwright-fetch.ts` and re-run `./scripts/deploy-vm.sh` if you need larger HARs. |
+| Check **OOM** / nginx 502 when Capture HAR is on | Peak RAM is Chromium + Node JSON (screenshot + optional HAR). Add RAM/swap; do not capture HAR on huge sites; optionally set `NODE_OPTIONS=--max-old-space-size=…` on the **running** systemd unit (the deploy script’s heap cap applies to **build** only). |
+| Leftover `/tmp/url-checker-har-*` | Abnormal (crash before cleanup). Safe to `rm -rf` those dirs; the app does not persist HAR. |
 
 ---
 
@@ -235,6 +282,7 @@ Supporting Compose settings:
 - `shm_size: 1gb` (Chromium needs shared memory)
 - Healthcheck against `/`
 - `restart: unless-stopped`
+- Optional `NODE_OPTIONS` in Compose (commented) if Capture HAR + large pages OOM the Node process
 
 ### Requirements
 
@@ -394,7 +442,8 @@ git checkout <ref>
 ## Security reminders
 
 - Do not expose an open checker to the public internet without auth and rate limits (SSRF risk even with current guards).
-- VM deploy installs **nginx on port 80** by default and binds the app to localhost; enable TLS with [`scripts/setup-https.sh`](scripts/setup-https.sh) `<domain>` (or a cloud LB) before production use.
+- **Ignore certificate errors** and **Capture HAR** are off by default; HAR is never written into the app directory or a database (OS temp during the check only).
+- VM deploy installs **nginx on port 80** by default and binds the app to localhost; enable TLS with [`scripts/setup-https.sh`](scripts/setup-https.sh) `<domain>` (or a cloud LB) before production use. Re-running deploy does not wipe other nginx sites.
 - Keep Playwright / base image versions updated with dependency upgrades.
 
 ---

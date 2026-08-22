@@ -43,11 +43,13 @@ export async function POST(request: Request) {
     });
     const headers = validateHeaders(body.headers);
     const ignoreCertErrors = body.ignoreCertErrors === true;
+    const captureHar = body.captureHar === true;
     const result = await fetchWithPlaywright(
       parsedUrl.toString(),
       headers,
       dnsOverride,
       ignoreCertErrors,
+      captureHar,
     );
     return NextResponse.json(result);
   } catch (err) {
@@ -78,6 +80,8 @@ export async function POST(request: Request) {
         navigationTiming: null,
         dnsOverride: null,
         ignoreCertErrors: false,
+        har: null,
+        harError: null,
         timingMs: 0,
         error: message,
       } satisfies CheckResponse,

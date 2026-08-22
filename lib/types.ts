@@ -14,6 +14,11 @@ export type CheckRequest = {
   dnsOverride?: DnsOverride;
   /** When true, Playwright ignores TLS certificate errors (default false). */
   ignoreCertErrors?: boolean;
+  /**
+   * When true, record a Playwright HAR for the session and return it in the
+   * response (ephemeral; not written to app storage). Default false.
+   */
+  captureHar?: boolean;
 };
 
 export type ResourceSummaryData = {
@@ -103,6 +108,16 @@ export type CheckResponse = {
   dnsOverride: DnsOverride | null;
   /** Whether this check ignored TLS certificate errors */
   ignoreCertErrors: boolean;
+  /**
+   * Full HAR 1.2 JSON text when `captureHar` was requested and within size limit;
+   * otherwise null. Only held in the API response / browser memory — not persisted.
+   */
+  har: string | null;
+  /**
+   * Set when HAR was requested but could not be returned (e.g. over size limit).
+   * Check results still succeed; only HAR download is unavailable.
+   */
+  harError: string | null;
   timingMs: number;
   error?: string;
 };
