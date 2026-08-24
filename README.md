@@ -12,7 +12,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 2. [Features](#features)
 3. [Architecture](#architecture) (includes [Screenshot timing](#screenshot-timing))
 4. [Force DNS resolution](#force-dns-resolution)
-5. [How content is stored](#how-content-is-stored)
+5. [How content is stored](#how-content-is-stored) — backend vs browser; theme `localStorage`; ephemeral HAR temp
 6. [User interface](#user-interface) (includes [Resource summary vs Network requests](#resource-summary-vs-network-requests), [Plain text and non-HTML responses](#plain-text-and-non-html-responses))
 7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only), [Timing tab](#timing-tab-network-rows-only) / [Resource timing](#resource-timing) / [Navigation timing](#navigation-timing))
 8. [Export](#export) (includes [HAR capture](#har-capture-playwright-session-archive))
@@ -37,7 +37,7 @@ URL Checker is a single-page tool plus one server API:
 3. If a DNS override is set, Chromium is started with `--host-resolver-rules=MAP <host> <ip>`.
 4. The browser navigates to the URL (`waitUntil: "load"`, plus a short best-effort `networkidle` wait). When ignore-cert is on, the context uses `ignoreHTTPSErrors: true`.
 5. The server collects HTML, a full-page screenshot, main-document headers, DOM resource URLs, and every network response observed during the load.
-6. The UI displays those results. Nothing is persisted to disk or a database.
+6. The UI displays those results. Check payloads are not written to a database or the app directory (see [How content is stored](#how-content-is-stored)).
 
 Typical uses:
 
@@ -192,18 +192,57 @@ lib/types.ts                → DnsOverride + ignoreCertErrors + captureHar / ha
 
 ## How content is stored
 
-| Storage type | Used? | Details |
-|--------------|-------|---------|
-| **Files on disk** | No | The app does not write HTML, screenshots, or logs to the filesystem. |
-| **Memory** | Yes | Server holds results only for the duration of the API request. The browser holds the latest result in React `useState` until refresh, another check, or tab close. |
-| **Other (DB, Redis, localStorage, etc.)** | No | There is no persistence, history, or shared cache. |
+**Verdict:** Almost everything is ephemeral. The only durable client store is the theme preference. The server does **not** keep check history in a database or under the app tree.
 
-Implications:
+### Backend server
 
-- Refreshing the page clears results.
-- Concurrent checks do not share stored content.
-- Large pages (big HTML + base64 screenshot + network body sizes) increase peak RAM usage for that request and for the browser tab.
+**Not stored (no DB / no app-disk archive)**  
+No database, Redis, file history, or check log under the project directory.
 
+**Ephemeral only (while a check runs, then discarded)**
+
+| Data | Where | Lifetime |
+|------|--------|----------|
+| Request body (`url`, headers, DNS override, ignore-cert, capture HAR / format) | Process memory in `POST /api/check` | Until the response finishes |
+| Playwright browser + page | Process memory | Closed after each check |
+| Network log, HTML, headers, screenshot buffer, timing | Process memory → JSON response | Same |
+| HAR temp files (`…/url-checker-har-*/session.har` or `.har.zip`) | OS temp via `mkdtemp(os.tmpdir())` in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts) | Created → sized/read into the JSON response → **explicitly deleted** by the app (see below) |
+| Feature flags | Read from env at runtime (`ALLOW_*`) | Host config, not per-check data |
+
+**HAR temp cleanup (explicit app action)**  
+The app does **not** rely on OS tmp scrubbing alone. After the HAR file is handled (success, oversize skip, or read error), `cleanupHarDir()` runs `fs.promises.rm(harDir, { recursive: true, force: true })` on the whole `url-checker-har-*` directory. That runs in the HAR block’s `finally`, and again in the outer `finally` if the directory was not cleared yet (e.g. failure before the HAR read).  
+
+**Caveat:** if the Node process is killed hard (`kill -9`, OOM killer) before those `finally` blocks run, leftover `/tmp/url-checker-har-*` dirs can remain until manual or OS cleanup. Normal success and handled-error paths always call delete.
+
+**Host config (not check data)**  
+Env / systemd / nginx / Let’s Encrypt certificates if you set them up — ops configuration, not URL-check results.
+
+### Browser
+
+**Persisted**
+
+| Data | Where | Key / note |
+|------|--------|------------|
+| Theme (`light` / `dark`) | `localStorage` | `url-checker-theme` (`ThemeProvider`) |
+
+**In memory only (lost on refresh or leaving the page)**
+
+| Data | Where |
+|------|--------|
+| Form state (URL, headers, DNS, checkboxes, HAR format) | React `useState` in `UrlForm` |
+| Latest check result (HTML, screenshot base64, network rows/bodies, HAR, errors) | React `useState` in `app/page.tsx` |
+| UI chrome (open tabs, filters, export menu) | Component state |
+| Feature flags from `GET /api/config` | Fetched into form state |
+
+**Downloads (user’s machine, not app storage)**  
+Export JSON / PNG / HTML / HAR / CSV — only if the user clicks **Export**; saved by the browser download dialog.
+
+### Implications
+
+- Refreshing the page clears check results (theme preference remains).
+- Concurrent checks do not share stored content on the server.
+- Large pages (HTML + base64 screenshot + network bodies + optional HAR) increase peak RAM for that request and for the browser tab.
+- Capture HAR uses a short-lived OS temp directory that the app **explicitly removes** after read (`cleanupHarDir` in `lib/playwright-fetch.ts`); nothing is kept under the app tree for archives.
 ---
 
 ## User interface
@@ -541,9 +580,12 @@ When Capture HAR is on, choose a format:
 | **`zip`** (default) | `content: "attach"` → `session.har.zip` | `.har.zip` via `harZipBase64` | Raw files inside the zip |
 | **`json`** | `content: "embed"` → `session.har` | `.har` via `har` | Base64-inlined in HAR JSON |
 
-1. Record into an **OS temp** path (not under the app tree).
-2. After capture, close the context, size-check (`MAX_HAR_BYTES`), populate `har` or `harZipBase64`, delete the temp dir.
-3. Download from meta / **Export**. Soft oversize → `harError`; page results still render.
+1. Record into an **OS temp** directory created with `mkdtemp` under `os.tmpdir()` (prefix `url-checker-har-`; not under the app tree).
+2. Close the browser context (flushes Playwright’s HAR recorder), then `stat` / `readFile` the archive into `har` or `harZipBase64` (or set `harError` if oversize/unreadable).
+3. **Explicitly delete** that temp directory via `cleanupHarDir()` → `fs.promises.rm(…, { recursive: true, force: true })` in a `finally` block (also in the outer `finally` as a safety net). Soft oversize still deletes the temp files; page results still render.
+4. Download from meta / **Export** (client-side only).
+
+Hard process kills may leave orphaned `url-checker-har-*` dirs under OS temp; see [How content is stored](#how-content-is-stored).
 
 Plan: [`docs/HAR_ZIP_IMPLEMENT_PLAN.md`](docs/HAR_ZIP_IMPLEMENT_PLAN.md).
 
@@ -923,7 +965,7 @@ This is not a full multi-tenant hardening suite. Do not expose an open instance 
 ## Limitations and out of scope
 
 - No authentication, user accounts, or audit log.
-- No persistent history (memory-only results).
+- No persistent check history (results are memory-only; theme preference is the only durable browser store — see [How content is stored](#how-content-is-stored)).
 - One Chromium browser per request (no shared pool).
 - `networkidle` is not required for success (sites with perpetual analytics/websockets would otherwise hang).
 - Screenshot + large HTML payloads can make JSON responses heavy.
