@@ -176,7 +176,7 @@ curl -s -X POST http://localhost:3000/api/check \
 
 Because the hostname in the URL is unchanged, certificates are validated for that hostname as usual. If the forced IP does not present a valid cert for that name, navigation fails (e.g. `net::ERR_CERT_COMMON_NAME_INVALID`). That is expected when pointing a name at the wrong host.
 
-To proceed anyway (self-signed, expired, or name mismatch), check **Ignore certificate errors** in the UI or send `"ignoreCertErrors": true` on `POST /api/check`. That sets Playwright’s browser context `ignoreHTTPSErrors: true` (default **off**).
+To proceed anyway (self-signed, expired, or name mismatch), check **Ignore certificate errors** in the UI or send `"ignoreCertErrors": true` on `POST /api/check`. That sets Playwright’s browser context `ignoreHTTPSErrors: true` (per-check default **off**). Server admins can hide/disable this with `ALLOW_IGNORE_CERT_ERRORS=0` (default **allow** when unset; see [DEPLOYMENT.md](DEPLOYMENT.md#feature-gates-env--default-allow)).
 
 ### Code map
 
@@ -531,7 +531,7 @@ Filenames look like `url-checker-example.com-20260820-143005-light.json` or `…
 
 ### HAR capture (Playwright session archive)
 
-Optional **Capture HAR** checkbox on the form (placed under **Custom headers**; default **off**).
+Optional **Capture HAR** checkbox on the form (placed under **Custom headers**; per-check default **off**). Admins can disable the feature entirely with `ALLOW_CAPTURE_HAR=0` (see [DEPLOYMENT.md](DEPLOYMENT.md#feature-gates-env--default-allow)).
 
 When checked:
 
@@ -636,6 +636,10 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
 
 ## API reference
 
+### `GET /api/config`
+
+Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureHar`). Same values enforced by `POST /api/check`. Defaults are **allow** when the corresponding env vars are unset.
+
 ### `POST /api/check`
 
 **Runtime:** Node.js (`export const runtime = "nodejs"`).  
@@ -663,8 +667,8 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
 | `url` | string | Yes | Absolute `http` or `https` URL |
 | `headers` | `{ name, value }[]` | No | Extra headers applied to the Playwright browser context |
 | `dnsOverride` | `{ host, ip }` | No | Force Chromium to resolve `host` to `ip` (must match URL hostname; private IPs blocked) |
-| `ignoreCertErrors` | boolean | No | When `true`, Playwright context uses `ignoreHTTPSErrors` (self-signed / expired TLS). Default `false` / omitted |
-| `captureHar` | boolean | No | When `true`, record Playwright HAR for the session and return it in `har` (subject to soft size limit). Default `false` / omitted |
+| `ignoreCertErrors` | boolean | No | When `true`, Playwright context uses `ignoreHTTPSErrors` (self-signed / expired TLS). Default `false` / omitted. Rejected with **400** if server has `ALLOW_IGNORE_CERT_ERRORS` disabled |
+| `captureHar` | boolean | No | When `true`, record Playwright HAR for the session and return it in `har` (subject to soft size limit). Default `false` / omitted. Rejected with **400** if server has `ALLOW_CAPTURE_HAR` disabled |
 
 #### Success response
 
@@ -773,6 +777,7 @@ Validation or fetch failures return JSON with `error` set and empty/default fiel
 url_checker/
 ├── app/
 │   ├── api/check/route.ts    # POST /api/check
+│   ├── api/config/route.ts   # GET /api/config (feature gates)
 │   ├── globals.css           # UI styles
 │   ├── layout.tsx
 │   └── page.tsx              # Main UI + submit flow
@@ -793,6 +798,7 @@ url_checker/
 │   ├── extract-resources.ts  # DOM URL extraction
 │   ├── network-collector.ts  # Playwright response log (IP, HTTP version, timing)
 │   ├── playwright-fetch.ts   # Browser launch + capture (+ MAP args, navigationTiming)
+│   ├── feature-flags.ts      # ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR (default allow)
 │   ├── types.ts              # Shared request/response types
 │   └── validate.ts           # URL / header / DNS override guards
 ├── scripts/
@@ -880,6 +886,8 @@ Defined mainly in `lib/playwright-fetch.ts` and related libs:
 | Content size | Prefer `Content-Length`; else response body length when available | Shown in network table |
 | DNS override | Chromium `--host-resolver-rules=MAP host ip` | Process-wide for that browser instance |
 | API `maxDuration` | 60s | Next.js route limit |
+| `ALLOW_IGNORE_CERT_ERRORS` | allow when unset | Server gate; disable with `0`/`false`/`no`/`off`. See [DEPLOYMENT.md](DEPLOYMENT.md#feature-gates-env--default-allow) |
+| `ALLOW_CAPTURE_HAR` | allow when unset | Same for HAR capture |
 
 Deploy note: the host must allow launching Chromium (sufficient RAM/CPU; often needs system libraries on Linux). **Vercel/Netlify serverless is a poor fit for Playwright** unless you add a serverless browser strategy — prefer `next start` on a Node server for production checks. See [Deployment](#deployment-vercel--netlify).
 
@@ -896,8 +904,8 @@ Built-in guards (v1):
 - Dangerous hop-by-hop / override headers blocked (for example `Host`, `Connection`, `Transfer-Encoding`).
 - Header name/value length and count limits.
 - Optional DNS override must use a **public** IP and a host that **matches** the URL hostname; Node DNS lookup is skipped only when a valid override is present (prevents using MAP to reach RFC1918 addresses).
-- **Ignore certificate errors** is **off** by default; enabling it only relaxes TLS verification inside Playwright (`ignoreHTTPSErrors`) and does not weaken SSRF / private-IP guards.
-- **Capture HAR** is **off** by default; when on, HAR is written only to an OS temp path during the check, returned in the API response, then deleted — not stored in the app directory or a database.
+- **Ignore certificate errors** is **off** per check by default; the server **allows** the option when `ALLOW_IGNORE_CERT_ERRORS` is unset. Set `ALLOW_IGNORE_CERT_ERRORS=0` to hide the UI control and reject API requests that ask for it. Enabling ignore only relaxes TLS verification inside Playwright and does not weaken SSRF / private-IP guards.
+- **Capture HAR** is **off** per check by default; the server **allows** the option when `ALLOW_CAPTURE_HAR` is unset. Set `ALLOW_CAPTURE_HAR=0` to disable. When on, HAR is written only to an OS temp path during the check, returned in the API response, then deleted — not stored in the app directory or a database.
 - HTML preview uses an empty `sandbox` attribute so scripts do not execute in the UI.
 
 This is not a full multi-tenant hardening suite. Do not expose an open instance to the public internet without auth, rate limits, and further SSRF review.

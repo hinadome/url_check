@@ -21,6 +21,12 @@ export type CheckRequest = {
   captureHar?: boolean;
 };
 
+/** Server feature gates from env (GET /api/config). Default allow when unset. */
+export type FeatureFlags = {
+  allowIgnoreCertErrors: boolean;
+  allowCaptureHar: boolean;
+};
+
 export type ResourceSummaryData = {
   links: string[];
   images: string[];

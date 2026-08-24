@@ -18,6 +18,9 @@ services:
       PORT: "3000"
       # Optional: increase if checks are heavy
       # NODE_OPTIONS: "--max-old-space-size=4096"
+      # Feature gates (default allow when unset). Disable with 0/false/no/off:
+      # ALLOW_IGNORE_CERT_ERRORS: "0"
+      # ALLOW_CAPTURE_HAR: "0"
     restart: unless-stopped
     # Chromium in Docker often needs more shared memory than the default 64MB
     shm_size: "1gb"

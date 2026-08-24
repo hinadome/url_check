@@ -9,6 +9,9 @@ WorkingDirectory=__APP_DIR__
 Environment=NODE_ENV=production
 Environment=PORT=__PORT__
 Environment=HOSTNAME=__HOST__
+# Optional feature gates (default allow when unset). Disable with 0/false/no/off:
+# Environment=ALLOW_IGNORE_CERT_ERRORS=0
+# Environment=ALLOW_CAPTURE_HAR=0
 ExecStart=__NODE_BIN__ __APP_DIR__/node_modules/next/dist/bin/next start -H __HOST__ -p __PORT__
 Restart=on-failure
 RestartSec=5

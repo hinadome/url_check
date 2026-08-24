@@ -179,11 +179,26 @@ curl -sI "http://127.0.0.1:${NGINX_PORT:-80}/"
 
 ### App features that affect the host (HAR, TLS ignore)
 
-These are **runtime UI/API options**, not extra deploy flags. After you re-run `deploy-vm.sh` (or rebuild the container), they are available with no further script changes.
+These are **runtime UI/API options**, not extra deploy script flags. After you re-run `deploy-vm.sh` (or rebuild the container), they are available with no further script changes.
+
+#### Feature gates (env — default **allow**)
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `ALLOW_IGNORE_CERT_ERRORS` | allow (unset) | When disabled (`0` / `false` / `no` / `off`), UI hides the checkbox and `POST /api/check` with `ignoreCertErrors: true` returns **400** |
+| `ALLOW_CAPTURE_HAR` | allow (unset) | Same for Capture HAR / `captureHar: true` |
+
+Enforced in [`lib/feature-flags.ts`](lib/feature-flags.ts) + `POST /api/check`. UI reads `GET /api/config`. Set on the **running** Node process (`.env`, systemd `Environment=`, Compose `environment:`), then **restart** the app. See [`.env.example`](.env.example).
+
+```bash
+# Public/shared host — lock down both
+ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0
+# then: sudo systemctl restart url-checker
+```
 
 | Feature | Deploy / ops impact |
 |---------|---------------------|
-| **Ignore certificate errors** | No extra packages. Playwright `ignoreHTTPSErrors` for that check only. Default **off**. |
+| **Ignore certificate errors** | No extra packages. Playwright `ignoreHTTPSErrors` for that check only. Per-check default **off**; server allow default **on**. |
 | **Capture HAR** | Playwright `recordHar` writes an ephemeral file under OS temp (`url-checker-har-*`), reads it into the JSON response, then **deletes** the directory. Nothing is stored under the app tree or a database. |
 | HAR soft limit | `MAX_HAR_CHARS` = `25_000_000` in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Over that, the **check still succeeds**; `har` is omitted and the UI shows `harError`. Raise the constant and rebuild to change it. |
 | Large JSON | A successful check with HAR can be tens of MB (HAR + screenshot + network bodies). nginx site templates stream the upstream (`proxy_buffering off`). If you raise `MAX_HAR_CHARS` a lot, also watch Node heap, `/tmp` space, and reverse-proxy idle timeouts. |

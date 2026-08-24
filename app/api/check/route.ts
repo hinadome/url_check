@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getFeatureFlags } from "@/lib/feature-flags";
 import { fetchWithPlaywright } from "@/lib/playwright-fetch";
 import type { CheckRequest, CheckResponse } from "@/lib/types";
 import {
@@ -42,20 +43,34 @@ export async function POST(request: Request) {
       skipDnsLookup: dnsOverride !== null,
     });
     const headers = validateHeaders(body.headers);
-    const ignoreCertErrors = body.ignoreCertErrors === true;
-    const captureHar = body.captureHar === true;
+
+    const flags = getFeatureFlags();
+    const wantIgnoreCert = body.ignoreCertErrors === true;
+    const wantCaptureHar = body.captureHar === true;
+
+    if (wantIgnoreCert && !flags.allowIgnoreCertErrors) {
+      throw new Error(
+        "ignoreCertErrors is disabled on this server (set ALLOW_IGNORE_CERT_ERRORS=1 or unset to allow)",
+      );
+    }
+    if (wantCaptureHar && !flags.allowCaptureHar) {
+      throw new Error(
+        "captureHar is disabled on this server (set ALLOW_CAPTURE_HAR=1 or unset to allow)",
+      );
+    }
+
     const result = await fetchWithPlaywright(
       parsedUrl.toString(),
       headers,
       dnsOverride,
-      ignoreCertErrors,
-      captureHar,
+      wantIgnoreCert,
+      wantCaptureHar,
     );
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Request failed";
     const isClientError =
-      /invalid|not allowed|required|too long|could not resolve|credentials|force-resolve/i.test(
+      /invalid|not allowed|required|too long|could not resolve|credentials|force-resolve|disabled on this server/i.test(
         message,
       );
 

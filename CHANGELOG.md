@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `setup-https.sh` checks certificate files with **sudo** (fixes false “Certificate not found” when `/etc/letsencrypt/live` is root-only); uses `--cert-name`, resolves `domain-000N` lineages, and probes the ACME webroot
 - **Ignore certificate errors** checkbox on the form (default **off**): `ignoreCertErrors` on `POST /api/check` → Playwright browser context `ignoreHTTPSErrors`; echoed on the result meta strip when enabled
 - **Capture HAR** checkbox (default **off**, under Custom headers): Playwright `recordHar` (`mode: "full"`, `content: "embed"`) via ephemeral OS temp file → response `har` for client download; no app/DB persistence. Soft size cap `MAX_HAR_CHARS` (`25_000_000`) in `lib/playwright-fetch.ts` — over limit sets `harError` and keeps page results; UI warning + Export HAR disabled
+- Server feature gates **`ALLOW_IGNORE_CERT_ERRORS`** / **`ALLOW_CAPTURE_HAR`** (default **allow** when unset; disable with `0`/`false`/`no`/`off`): enforced in `POST /api/check` (400 if client requests a disabled option); UI loads `GET /api/config` and hides checkboxes. Documented in [`.env.example`](.env.example) and [DEPLOYMENT.md](DEPLOYMENT.md#feature-gates-env--default-allow)
 
 ### Changed
 

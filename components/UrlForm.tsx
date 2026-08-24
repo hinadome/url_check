@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { HeaderEditor } from "./HeaderEditor";
-import type { DnsOverride, HeaderPair } from "@/lib/types";
+import type { DnsOverride, FeatureFlags, HeaderPair } from "@/lib/types";
 
 export type UrlFormSubmit = {
   url: string;
@@ -17,6 +17,11 @@ type UrlFormProps = {
   loading: boolean;
 };
 
+const DEFAULT_FLAGS: FeatureFlags = {
+  allowIgnoreCertErrors: true,
+  allowCaptureHar: true,
+};
+
 export function UrlForm({ onSubmit, loading }: UrlFormProps) {
   const [url, setUrl] = useState("https://example.com");
   const [headers, setHeaders] = useState<HeaderPair[]>([]);
@@ -24,6 +29,33 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
   const [dnsIp, setDnsIp] = useState("");
   const [ignoreCertErrors, setIgnoreCertErrors] = useState(false);
   const [captureHar, setCaptureHar] = useState(false);
+  const [flags, setFlags] = useState<FeatureFlags>(DEFAULT_FLAGS);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/config");
+        if (!res.ok) return;
+        const data = (await res.json()) as Partial<FeatureFlags>;
+        if (cancelled) return;
+        setFlags({
+          allowIgnoreCertErrors: data.allowIgnoreCertErrors !== false,
+          allowCaptureHar: data.allowCaptureHar !== false,
+        });
+      } catch {
+        // Keep default-allow if config endpoint is unreachable
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!flags.allowIgnoreCertErrors) setIgnoreCertErrors(false);
+    if (!flags.allowCaptureHar) setCaptureHar(false);
+  }, [flags]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -50,8 +82,8 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
       url: trimmed,
       headers: headers.filter((h) => h.name.trim()),
       dnsOverride,
-      ignoreCertErrors,
-      captureHar,
+      ignoreCertErrors: flags.allowIgnoreCertErrors && ignoreCertErrors,
+      captureHar: flags.allowCaptureHar && captureHar,
     });
   };
 
@@ -103,39 +135,43 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
 
       <HeaderEditor headers={headers} onChange={setHeaders} disabled={loading} />
 
-      <label className="field-checkbox">
-        <input
-          type="checkbox"
-          checked={ignoreCertErrors}
-          onChange={(e) => setIgnoreCertErrors(e.target.checked)}
-          disabled={loading}
-        />
-        <span>
-          Ignore certificate errors
-          <span className="muted field-checkbox-hint">
-            {" "}
-            — allow self-signed / expired TLS (Playwright{" "}
-            <code>ignoreHTTPSErrors</code>)
+      {flags.allowIgnoreCertErrors && (
+        <label className="field-checkbox">
+          <input
+            type="checkbox"
+            checked={ignoreCertErrors}
+            onChange={(e) => setIgnoreCertErrors(e.target.checked)}
+            disabled={loading}
+          />
+          <span>
+            Ignore certificate errors
+            <span className="muted field-checkbox-hint">
+              {" "}
+              — allow self-signed / expired TLS (Playwright{" "}
+              <code>ignoreHTTPSErrors</code>)
+            </span>
           </span>
-        </span>
-      </label>
+        </label>
+      )}
 
-      <label className="field-checkbox">
-        <input
-          type="checkbox"
-          checked={captureHar}
-          onChange={(e) => setCaptureHar(e.target.checked)}
-          disabled={loading}
-        />
-        <span>
-          Capture HAR
-          <span className="muted field-checkbox-hint">
-            {" "}
-            — record the Playwright session as a HAR file for download after the
-            check (not stored on the server)
+      {flags.allowCaptureHar && (
+        <label className="field-checkbox">
+          <input
+            type="checkbox"
+            checked={captureHar}
+            onChange={(e) => setCaptureHar(e.target.checked)}
+            disabled={loading}
+          />
+          <span>
+            Capture HAR
+            <span className="muted field-checkbox-hint">
+              {" "}
+              — record the Playwright session as a HAR file for download after the
+              check (not stored on the server)
+            </span>
           </span>
-        </span>
-      </label>
+        </label>
+      )}
 
       <button type="submit" className="btn btn-primary" disabled={loading}>
         {loading ? "Checking…" : "Check URL"}
