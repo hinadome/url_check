@@ -15,6 +15,7 @@ Related files:
 | [`deploy/nginx-url-checker.conf`](deploy/nginx-url-checker.conf) | nginx reverse-proxy site template (HTTP front → Next.js) |
 | [`deploy/nginx-url-checker-https.conf`](deploy/nginx-url-checker-https.conf) | nginx HTTPS site template (TLS + HTTP→HTTPS redirect) |
 | [`scripts/setup-https.sh`](scripts/setup-https.sh) | Post-deploy Let's Encrypt cert + HTTPS nginx config (domain required) |
+| [`scripts/replay-har.mjs`](scripts/replay-har.mjs) | Optional **client-side** HAR replay (not part of deploy); see [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) |
 | [`Dockerfile`](Dockerfile) | Production image (Playwright base + Next.js) |
 | [`docker-compose.yml`](docker-compose.yml) | One-service Compose stack (`shm_size` for Chromium) |
 | [`vercel.json`](vercel.json) / [`netlify.toml`](netlify.toml) | Optional serverless UI hosting (Playwright often unreliable) |
@@ -29,7 +30,7 @@ Related files:
 - Open TCP port for the app (default **3000**)
 - Enough RAM for Chromium (recommend **≥ 2 GB** free; **4 GB+** preferred under load)
 - Writable OS temp (`os.tmpdir()`, usually `/tmp`) — used only while **Capture HAR** is on, then deleted
-- Extra RAM/headroom if users enable **Capture HAR** (HAR is returned in the `/api/check` JSON, up to ~25 MB plus screenshot and network bodies)
+- Extra RAM/headroom if users enable **Capture HAR** (HAR archive returned in the `/api/check` JSON, up to ~25 MB per `MAX_HAR_BYTES`, plus screenshot and network bodies)
 
 ---
 
@@ -58,6 +59,8 @@ After `git pull` (or your usual sync), re-run the same script on the VM:
 ```
 
 That path is idempotent for updates: stops `url-checker` if running, runs `npm ci` + Playwright Chromium install + `npm run build`, rewrites/restarts the systemd unit, and leaves other nginx sites alone (skips rewriting this app’s site when unchanged; preserves HTTPS site files from `setup-https.sh`).
+
+**Capture HAR / TLS ignore / replay:** no extra deploy flags. HAR dual format (`harFormat` zip/json), `MAX_HAR_BYTES`, and feature gates ship with the app after rebuild. Set `ALLOW_*` in `.env` or systemd/Compose and restart. Offline replay is optional client-side — [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) / [`scripts/replay-har.mjs`](scripts/replay-har.mjs) — not started by the deploy scripts.
 
 ### Requirements
 
@@ -199,9 +202,17 @@ ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0
 | Feature | Deploy / ops impact |
 |---------|---------------------|
 | **Ignore certificate errors** | No extra packages. Playwright `ignoreHTTPSErrors` for that check only. Per-check default **off**; server allow default **on**. |
-| **Capture HAR** | Playwright `recordHar` writes an ephemeral file under OS temp (`url-checker-har-*`), reads it into the JSON response, then **deletes** the directory. Nothing is stored under the app tree or a database. |
-| HAR soft limit | `MAX_HAR_CHARS` = `25_000_000` in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Over that, the **check still succeeds**; `har` is omitted and the UI shows `harError`. Raise the constant and rebuild to change it. |
-| Large JSON | A successful check with HAR can be tens of MB (HAR + screenshot + network bodies). nginx site templates stream the upstream (`proxy_buffering off`). If you raise `MAX_HAR_CHARS` a lot, also watch Node heap, `/tmp` space, and reverse-proxy idle timeouts. |
+| **Capture HAR** | Playwright `recordHar` (`mode: "full"`) writes an ephemeral archive under OS temp (`/tmp/url-checker-har-*`), returns it in the API response, then **deletes** the directory. UI radios / `harFormat` on `POST /api/check`: **`zip`** (default, attach → `harZipBase64` / `.har.zip`) or **`json`** (embed → `har` / `.har`). See format table below. |
+| HAR soft limit | `MAX_HAR_BYTES` = `25_000_000` in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Applies to the **archive file** (zip or embed `.har`). Over that, the **check still succeeds**; `har` / `harZipBase64` are omitted and the UI shows `harError`. Raise the constant and rebuild to change it. |
+| Large JSON | A successful check with HAR can be tens of MB (`harZipBase64` or large `har` string + screenshot + network bodies). nginx site templates stream the upstream (`proxy_buffering off`). If you raise `MAX_HAR_BYTES` a lot, also watch Node heap, `/tmp` space, and reverse-proxy idle timeouts. |
+| **Replay (offline)** | Not a server feature. After download, replay exports with [`scripts/replay-har.mjs`](scripts/replay-har.mjs) (URL Checker zip/json, DevTools `.har`, `harZipBase64`). Guide: [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md). Requires Node + Chromium on the machine running the script. |
+
+**Capture HAR formats**
+
+| `harFormat` | Playwright | API field | Download | Binaries |
+|-------------|------------|-----------|----------|----------|
+| **`zip`** (default) | `content: "attach"` → `session.har.zip` | `harZipBase64` | `.har.zip` | Raw files inside the zip |
+| **`json`** | `content: "embed"` → `session.har` | `har` | `.har` | Base64-inlined in HAR JSON |
 
 Details: [README — HAR capture](README.md#har-capture-playwright-session-archive).
 
@@ -276,8 +287,8 @@ curl -sI "http://127.0.0.1:${PORT:-3000}/"
 | nginx fails `nginx -t` / port 80 busy | `sudo nginx -t`; stop other web servers; or `NGINX_PORT=8080 ./scripts/deploy-vm.sh`; or `--no-nginx` |
 | App reachable on :3000 but not :80 | Check `systemctl status nginx`; firewall/security group must allow **80** (and **443** after certbot) |
 | `setup-https` “Certificate not found after certbot” | Often a **false negative**: `/etc/letsencrypt/live` is root-only, so a non-root `test -f` fails. Current script checks with `sudo`. Re-pull and re-run. Also verify: `sudo ls -la /etc/letsencrypt/live/`, `sudo certbot certificates`, DNS A record, port 80 from the internet, and ACME path `http://<domain>/.well-known/acme-challenge/` |
-| Check works but **HAR download unavailable** | Expected when the archive exceeds `MAX_HAR_CHARS` (~25 MB) — page results still render. Confirm `/tmp` is writable and has free space (`df -h /tmp`). Raise the constant in `lib/playwright-fetch.ts` and re-run `./scripts/deploy-vm.sh` if you need larger HARs. |
-| Check **OOM** / nginx 502 when Capture HAR is on | Peak RAM is Chromium + Node JSON (screenshot + optional HAR). Add RAM/swap; do not capture HAR on huge sites; optionally set `NODE_OPTIONS=--max-old-space-size=…` on the **running** systemd unit (the deploy script’s heap cap applies to **build** only). |
+| Check works but **HAR download unavailable** | Expected when the archive exceeds `MAX_HAR_BYTES` (~25 MB) — page results still render. Confirm `/tmp` is writable and has free space (`df -h /tmp`). Raise the constant in `lib/playwright-fetch.ts` and re-run `./scripts/deploy-vm.sh` if you need larger HARs. |
+| Check **OOM** / nginx 502 when Capture HAR is on | Peak RAM is Chromium + Node JSON (screenshot + optional `harZipBase64` or large `har` string). Add RAM/swap; do not capture HAR on huge sites; optionally set `NODE_OPTIONS=--max-old-space-size=…` on the **running** systemd unit (the deploy script’s heap cap applies to **build** only). |
 | Leftover `/tmp/url-checker-har-*` | Abnormal (crash before cleanup). Safe to `rm -rf` those dirs; the app does not persist HAR. |
 
 ---
@@ -457,7 +468,7 @@ git checkout <ref>
 ## Security reminders
 
 - Do not expose an open checker to the public internet without auth and rate limits (SSRF risk even with current guards).
-- **Ignore certificate errors** and **Capture HAR** are off by default; HAR is never written into the app directory or a database (OS temp during the check only).
+- **Ignore certificate errors** and **Capture HAR** are off by default per check; HAR is never written into the app directory or a database (OS temp during the check only). Lock down with `ALLOW_IGNORE_CERT_ERRORS=0` / `ALLOW_CAPTURE_HAR=0` on shared hosts (see [Feature gates](#feature-gates-env--default-allow)).
 - VM deploy installs **nginx on port 80** by default and binds the app to localhost; enable TLS with [`scripts/setup-https.sh`](scripts/setup-https.sh) `<domain>` (or a cloud LB) before production use. Re-running deploy does not wipe other nginx sites.
 - Keep Playwright / base image versions updated with dependency upgrades.
 
@@ -466,4 +477,6 @@ git checkout <ref>
 ## Related docs
 
 - App overview and API: [README.md](README.md)
+- HAR replay (post-download): [REPLAY_SCRIPT.md](REPLAY_SCRIPT.md)
+- HAR zip design notes: [docs/HAR_ZIP_IMPLEMENT_PLAN.md](docs/HAR_ZIP_IMPLEMENT_PLAN.md)
 - Change history: [CHANGELOG.md](CHANGELOG.md)

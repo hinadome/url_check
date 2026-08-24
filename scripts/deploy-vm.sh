@@ -2,6 +2,11 @@
 # Deploy URL Checker on a Linux VM (Ubuntu/Debian-oriented).
 # Safe to re-run after pulling app updates: stops the unit (if active), rebuilds,
 # rewrites the systemd unit, restarts the app, and only touches this app's nginx site.
+#
+# Runtime options (not script flags): Capture HAR (zip/json), ignore cert errors,
+# ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR — see DEPLOYMENT.md § "App features
+# that affect the host". Optional HAR replay: scripts/replay-har.mjs (REPLAY_SCRIPT.md).
+#
 # Usage:
 #   ./scripts/deploy-vm.sh              # install deps, build, systemd + nginx front proxy
 #   ./scripts/deploy-vm.sh --build-only # install + build, do not (re)start service

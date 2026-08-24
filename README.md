@@ -79,7 +79,7 @@ Next.js API route (Node.js)
 Playwright Chromium
     │  optional: --host-resolver-rules=MAP host ip
     │  optional: ignoreHTTPSErrors
-    │  optional: recordHar → ephemeral temp file → response field `har`
+    │  optional: recordHar (attach → .har.zip) → response field `harZipBase64`
     │  goto → capture HTML, screenshot, headers, DOM resources, network
     ▼
 JSON response → React state → UI panels (+ client HAR download)
@@ -99,9 +99,9 @@ JSON response → React state → UI panels (+ client HAR download)
    3. **Screenshot** via `page.screenshot({ fullPage: true, type: "png" })`
    4. DOM resource extraction (`lib/extract-resources.ts`)
    5. Flush network log (`lib/network-collector.ts`; responses were collected throughout the load via a `response` listener)
-   6. Close browser context (flushes HAR to an OS temp file when `captureHar` was set); read HAR into the response or set `harError` if over the soft size limit; delete the temp dir
-5. **Respond** — JSON returned to the client (includes `dnsOverride`, `ignoreCertErrors`, `har` / `harError`); nothing is persisted to app storage or a database.
-6. **Render** — Client stores the payload in React state and renders panels; HAR download is client-side only when `har` is present.
+   6. Close browser context (flushes HAR zip when `captureHar` was set); read zip into `harZipBase64` or set `harError` if over the soft byte limit; delete the temp dir
+5. **Respond** — JSON returned to the client (includes `dnsOverride`, `ignoreCertErrors`, `harZipBase64` / `harError`); nothing is persisted to app storage or a database.
+6. **Render** — Client stores the payload in React state and renders panels; HAR zip download is client-side only when `harZipBase64` is present.
 
 ### Screenshot timing
 
@@ -185,7 +185,7 @@ components/UrlForm.tsx      → collect dnsHost / dnsIp / ignoreCertErrors / cap
 app/api/check/route.ts      → validateDnsOverride + validateUrl({ skipDnsLookup })
 lib/validate.ts             → validateDnsOverride(), validateUrl()
 lib/playwright-fetch.ts     → --host-resolver-rules=MAP …; ignoreHTTPSErrors; recordHar
-lib/types.ts                → DnsOverride + ignoreCertErrors + captureHar / har / harError
+lib/types.ts                → DnsOverride + ignoreCertErrors + captureHar / harZipBase64 / harError
 ```
 
 ---
@@ -518,40 +518,43 @@ After a successful check, use **Export** on the meta strip (`components/ExportMe
 
 | Menu item | File | Contents |
 |-----------|------|----------|
-| **JSON (light)** — recommended | `.json` | Full result shape; `screenshotBase64` cleared; `har` cleared; network `body` cleared (`bodyEncoding: "empty"`). **Keeps** headers, resources, HTML, network metadata including `remoteIp` / `httpVersion` / `timing`, top-level `navigationTiming`, and `harError` if set |
-| **JSON (full)** | `.json` | Complete `CheckResponse`: screenshot base64, network bodies, HAR text when present, **and** all timing fields |
+| **JSON (light)** — recommended | `.json` | Full result shape; `screenshotBase64` cleared; `harZipBase64` cleared; network `body` cleared (`bodyEncoding: "empty"`). **Keeps** headers, resources, HTML, network metadata including `remoteIp` / `httpVersion` / `timing`, top-level `navigationTiming`, and `harError` if set |
+| **JSON (full)** | `.json` | Complete `CheckResponse`: screenshot base64, network bodies, HAR zip base64 when present, **and** all timing fields |
 | **Screenshot (PNG)** | `.png` | Decoded full-page screenshot (disabled if none) |
 | **HTML source** | `.html` | Captured HTML |
-| **HAR** | `.har` | Playwright session archive (HAR 1.2 JSON). Enabled only when **Capture HAR** was checked and the archive fit under the soft size limit |
+| **HAR zip** | `.har.zip` | When `harFormat: "zip"` — binaries as zip files |
+| **HAR JSON** | `.har` | When `harFormat: "json"` — binaries base64-inlined |
 | **Network CSV (index)** | `.csv` | Metadata rows only: `date`, `url`, `host`, `remoteIp`, `remotePort`, `status`, `httpVersion`, `contentType`, `contentSize`, `resourceType`, `bodyEncoding`, `bodyTruncated`, `requestHeaderCount`, `responseHeaderCount` |
 
-**Design rule:** CSV is a spreadsheet-friendly **index**. Request/response header maps, body content, and full timing maps live in **JSON** or **HAR**, not CSV.
+**Design rule:** CSV is a spreadsheet-friendly **index**. Request/response header maps, body content, and full timing maps live in **JSON** or **HAR zip**, not CSV.
 
-Filenames look like `url-checker-example.com-20260820-143005-light.json` or `….har`.
+Filenames look like `url-checker-example.com-20260820-143005-light.json` or `….har.zip`.
 
 ### HAR capture (Playwright session archive)
 
-Optional **Capture HAR** checkbox on the form (placed under **Custom headers**; per-check default **off**). Admins can disable the feature entirely with `ALLOW_CAPTURE_HAR=0` (see [DEPLOYMENT.md](DEPLOYMENT.md#feature-gates-env--default-allow)).
+Optional **Capture HAR** checkbox on the form (under **Custom headers**; per-check default **off**). Admins can disable with `ALLOW_CAPTURE_HAR=0` (see [DEPLOYMENT.md](DEPLOYMENT.md#feature-gates-env--default-allow)).
 
-When checked:
+When Capture HAR is on, choose a format:
 
-1. Playwright records the browser context with `recordHar: { mode: "full", content: "embed" }` into an **OS temp directory** (`os.tmpdir()`), not under the app tree.
-2. After capture, the context is closed (flushes the HAR), the file is sized/read into the API JSON field `har`, then the temp directory is **deleted**.
-3. The UI renders all normal results. If `har` is present, use **Download session HAR** on the meta strip or **Export → Download HAR**.
+| `harFormat` | Playwright | Download | Binaries |
+|-------------|------------|----------|----------|
+| **`zip`** (default) | `content: "attach"` → `session.har.zip` | `.har.zip` via `harZipBase64` | Raw files inside the zip |
+| **`json`** | `content: "embed"` → `session.har` | `.har` via `har` | Base64-inlined in HAR JSON |
 
-**No server-side archive store:** HAR exists only in the HTTP response and browser memory (same model as the screenshot).
+1. Record into an **OS temp** path (not under the app tree).
+2. After capture, close the context, size-check (`MAX_HAR_BYTES`), populate `har` or `harZipBase64`, delete the temp dir.
+3. Download from meta / **Export**. Soft oversize → `harError`; page results still render.
 
-#### Soft limit (`MAX_HAR_CHARS`)
+Plan: [`docs/HAR_ZIP_IMPLEMENT_PLAN.md`](docs/HAR_ZIP_IMPLEMENT_PLAN.md).
+
+#### Soft limit (`MAX_HAR_BYTES`)
 
 | Item | Detail |
 |------|--------|
-| **What** | Soft size cap on the HAR payload returned to the client |
-| **Default** | `25_000_000` (~25 MB; bytes on disk ≈ UTF-8 length for typical HAR JSON) |
-| **Where to change** | `MAX_HAR_CHARS` constant in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts) (near the top of the file, with other fetch limits) |
-| **If exceeded** | The **check still succeeds** and the UI still renders. `har` is `null`, `harError` explains that download is unavailable, and a warning appears above the result panels. Export → Download HAR stays disabled with that message. |
-| **Hard / practical ceilings** | Not a second app flag — Node heap, Playwright/V8 string size (~512 MB), browser RAM, and reverse-proxy buffering can still fail very large sessions even if you raise `MAX_HAR_CHARS`. |
-
-To raise or lower the soft limit, edit `MAX_HAR_CHARS` in `lib/playwright-fetch.ts` and rebuild/redeploy.
+| **What** | Soft size cap on the archive file (zip or `.har`) before returning it |
+| **Default** | `25_000_000` (~25 MB) |
+| **Where to change** | `MAX_HAR_BYTES` in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts) |
+| **If exceeded** | Check succeeds; `har` / `harZipBase64` null; `harError` set; UI warning |
 
 ---
 
@@ -668,7 +671,8 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
 | `headers` | `{ name, value }[]` | No | Extra headers applied to the Playwright browser context |
 | `dnsOverride` | `{ host, ip }` | No | Force Chromium to resolve `host` to `ip` (must match URL hostname; private IPs blocked) |
 | `ignoreCertErrors` | boolean | No | When `true`, Playwright context uses `ignoreHTTPSErrors` (self-signed / expired TLS). Default `false` / omitted. Rejected with **400** if server has `ALLOW_IGNORE_CERT_ERRORS` disabled |
-| `captureHar` | boolean | No | When `true`, record Playwright HAR for the session and return it in `har` (subject to soft size limit). Default `false` / omitted. Rejected with **400** if server has `ALLOW_CAPTURE_HAR` disabled |
+| `captureHar` | boolean | No | When `true`, record Playwright HAR and return `har` or `harZipBase64` per `harFormat`. Rejected with **400** if `ALLOW_CAPTURE_HAR` disabled |
+| `harFormat` | `"zip"` \| `"json"` | No | Packaging when `captureHar` is true. Default **`zip`**. `zip` = attach / binaries as files; `json` = embed / binaries as base64 |
 
 #### Success response
 
@@ -738,7 +742,9 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
     "ip": "203.0.113.10"
   },
   "ignoreCertErrors": false,
+  "harFormat": null,
   "har": null,
+  "harZipBase64": null,
   "harError": null,
   "timingMs": 2100
 }
@@ -757,8 +763,10 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
 | `navigationTiming` | Page `PerformanceNavigationTiming` snapshot, or `null` |
 | `dnsOverride` | Applied force-resolve mapping, or `null` |
 | `ignoreCertErrors` | Whether this check used Playwright `ignoreHTTPSErrors` |
-| `har` | Full HAR 1.2 JSON text when `captureHar` succeeded within the soft size limit; otherwise `null` |
-| `harError` | Human-readable reason HAR download is unavailable (e.g. over `MAX_HAR_CHARS`); check still succeeds. `null` when HAR was not requested or was returned successfully |
+| `harFormat` | `"zip"` \| `"json"` when HAR was requested; otherwise `null` |
+| `har` | HAR 1.2 JSON text when `harFormat: "json"` and within limit; otherwise `null` |
+| `harZipBase64` | `.har.zip` as base64 when `harFormat: "zip"` and within limit; otherwise `null` |
+| `harError` | Why HAR download is unavailable (e.g. over `MAX_HAR_BYTES`); check still succeeds |
 | `timingMs` | Server-side elapsed time for the check |
 | `error` | Present on failure responses |
 
@@ -882,7 +890,7 @@ Defined mainly in `lib/playwright-fetch.ts` and related libs:
 | Max HTML chars | 2,000,000 | Truncate oversized serialized HTML |
 | Max network entries | 2,000 | Cap collected responses |
 | Max network body bytes | 512,000 | Per-response body capture for Content tab (text or base64); truncated beyond this |
-| **`MAX_HAR_CHARS`** | **25,000,000** | Soft HAR size cap in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Over limit → `har: null` + `harError`; **page results still succeed**. See [HAR capture](#har-capture-playwright-session-archive). |
+| **`MAX_HAR_BYTES`** | **25,000,000** | Soft HAR **zip** size cap in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Over limit → `harZipBase64: null` + `harError`; **page results still succeed**. See [HAR capture](#har-capture-playwright-session-archive). |
 | Content size | Prefer `Content-Length`; else response body length when available | Shown in network table |
 | DNS override | Chromium `--host-resolver-rules=MAP host ip` | Process-wide for that browser instance |
 | API `maxDuration` | 60s | Next.js route limit |
@@ -922,7 +930,7 @@ This is not a full multi-tenant hardening suite. Do not expose an open instance 
 - Sites that block headless browsers, require interactive CAPTCHAs, or depend on special client TLS may fail or look incomplete.
 - DNS override maps a single exact hostname (no multi-host or wildcard UI yet).
 - Third-party hosts are never remapped by the DNS override.
-- Export is client-side only (no server archive store); Network CSV is a metadata index (no header/body cells); HAR is optional via **Capture HAR** and subject to `MAX_HAR_CHARS` (see [HAR capture](#har-capture-playwright-session-archive)).
+- Export is client-side only (no server archive store); Network CSV is a metadata index (no header/body cells); HAR is optional via **Capture HAR** as `.har.zip` (`content: "attach"`) subject to `MAX_HAR_BYTES` (see [HAR capture](#har-capture-playwright-session-archive)).
 - No PDF export or editable HTML workspace.
 - Resource summary unique-URL totals are not expected to equal Network request row counts (different sources; see [Resource summary vs Network requests](#resource-summary-vs-network-requests)).
 

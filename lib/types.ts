@@ -8,6 +8,13 @@ export type DnsOverride = {
   ip: string;
 };
 
+/**
+ * How Playwright records HAR bodies when `captureHar` is true.
+ * - `zip` — `content: "attach"` → `.har.zip` (binaries as files)
+ * - `json` — `content: "embed"` → `.har` JSON (binaries as base64 in HAR)
+ */
+export type HarFormat = "zip" | "json";
+
 export type CheckRequest = {
   url: string;
   headers?: HeaderPair[];
@@ -19,6 +26,8 @@ export type CheckRequest = {
    * response (ephemeral; not written to app storage). Default false.
    */
   captureHar?: boolean;
+  /** HAR packaging when `captureHar` is true. Default `zip`. */
+  harFormat?: HarFormat;
 };
 
 /** Server feature gates from env (GET /api/config). Default allow when unset. */
@@ -114,11 +123,19 @@ export type CheckResponse = {
   dnsOverride: DnsOverride | null;
   /** Whether this check ignored TLS certificate errors */
   ignoreCertErrors: boolean;
+  /** HAR packaging used for this check, or null when HAR was not requested */
+  harFormat: HarFormat | null;
   /**
-   * Full HAR 1.2 JSON text when `captureHar` was requested and within size limit;
-   * otherwise null. Only held in the API response / browser memory — not persisted.
+   * Full HAR 1.2 JSON text when `captureHar` + `harFormat: "json"` succeeded
+   * within the soft size limit; otherwise null. Binaries are base64-in-HAR.
    */
   har: string | null;
+  /**
+   * Playwright HAR session as a zip (base64 for JSON transport) when
+   * `captureHar` + `harFormat: "zip"` succeeded within the soft byte limit;
+   * otherwise null. Zip uses `content: "attach"` (binaries as files).
+   */
+  harZipBase64: string | null;
   /**
    * Set when HAR was requested but could not be returned (e.g. over size limit).
    * Check results still succeed; only HAR download is unavailable.

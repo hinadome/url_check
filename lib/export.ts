@@ -44,7 +44,8 @@ export function toLightResult(result: CheckResponse): CheckResponse {
     ...result,
     screenshotBase64: "",
     har: null,
-    // Keep harError so light exports still explain why HAR was omitted
+    harZipBase64: null,
+    // Keep harError / harFormat so light exports still explain HAR outcome
     networkRequests: (result.networkRequests ?? []).map((entry) => ({
       ...entry,
       body: "",
@@ -54,15 +55,34 @@ export function toLightResult(result: CheckResponse): CheckResponse {
   };
 }
 
-/** Download Playwright HAR JSON when present on the check result (client-side only). */
+/** Download Playwright HAR (zip or JSON embed) when present on the result. */
 export function exportHar(result: CheckResponse): boolean {
-  const har = result.har;
-  if (!har) return false;
-  downloadBlob(
-    `${exportBasename(result)}.har`,
-    new Blob([har], { type: "application/json;charset=utf-8" }),
-  );
-  return true;
+  if (result.harZipBase64) {
+    const binary = atob(result.harZipBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    downloadBlob(
+      `${exportBasename(result)}.har.zip`,
+      new Blob([bytes], { type: "application/zip" }),
+    );
+    return true;
+  }
+
+  if (result.har) {
+    downloadBlob(
+      `${exportBasename(result)}.har`,
+      new Blob([result.har], { type: "application/json;charset=utf-8" }),
+    );
+    return true;
+  }
+
+  return false;
+}
+
+export function hasHarDownload(result: CheckResponse): boolean {
+  return Boolean(result.harZipBase64 || result.har);
 }
 
 export function exportJson(

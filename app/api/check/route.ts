@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getFeatureFlags } from "@/lib/feature-flags";
 import { fetchWithPlaywright } from "@/lib/playwright-fetch";
-import type { CheckRequest, CheckResponse } from "@/lib/types";
+import type { CheckRequest, CheckResponse, HarFormat } from "@/lib/types";
 import {
   validateDnsOverride,
   validateHeaders,
@@ -47,6 +47,8 @@ export async function POST(request: Request) {
     const flags = getFeatureFlags();
     const wantIgnoreCert = body.ignoreCertErrors === true;
     const wantCaptureHar = body.captureHar === true;
+    const harFormat: HarFormat =
+      body.harFormat === "json" ? "json" : "zip";
 
     if (wantIgnoreCert && !flags.allowIgnoreCertErrors) {
       throw new Error(
@@ -65,6 +67,7 @@ export async function POST(request: Request) {
       dnsOverride,
       wantIgnoreCert,
       wantCaptureHar,
+      harFormat,
     );
     return NextResponse.json(result);
   } catch (err) {
@@ -95,7 +98,9 @@ export async function POST(request: Request) {
         navigationTiming: null,
         dnsOverride: null,
         ignoreCertErrors: false,
+        harFormat: null,
         har: null,
+        harZipBase64: null,
         harError: null,
         timingMs: 0,
         error: message,

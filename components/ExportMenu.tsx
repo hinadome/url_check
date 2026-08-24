@@ -7,6 +7,7 @@ import {
   exportJson,
   exportNetworkCsv,
   exportScreenshotPng,
+  hasHarDownload,
 } from "@/lib/export";
 import type { CheckResponse } from "@/lib/types";
 
@@ -19,8 +20,21 @@ export function ExportMenu({ result }: ExportMenuProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const hasScreenshot = Boolean(result.screenshotBase64);
-  const hasHar = Boolean(result.har);
+  const hasHar = hasHarDownload(result);
   const harError = result.harError ?? null;
+  const harLabel =
+    result.harFormat === "json"
+      ? "Download HAR (JSON)"
+      : result.harFormat === "zip"
+        ? "Download HAR zip"
+        : "Download HAR";
+  const harHint =
+    result.harFormat === "json"
+      ? "Single .har — binaries base64-inlined"
+      : result.harFormat === "zip"
+        ? "Playwright .har.zip — binaries as files"
+        : "Playwright session archive";
+
 
   useEffect(() => {
     if (!open) return;
@@ -123,9 +137,9 @@ export function ExportMenu({ result }: ExportMenuProps) {
                 })
               }
             >
-              <span>Download HAR</span>
+              <span>{harLabel}</span>
               {hasHar ? (
-                <span className="muted">Playwright session archive (HAR 1.2)</span>
+                <span className="muted">{harHint}</span>
               ) : harError ? (
                 <span className="muted export-menu-item-error">{harError}</span>
               ) : (

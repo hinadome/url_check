@@ -275,6 +275,40 @@ a:hover {
   font-size: 0.8em;
 }
 
+.har-format {
+  margin: 0;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.har-format legend {
+  padding: 0 0.25rem;
+  font-weight: 550;
+  font-size: 0.85rem;
+}
+
+.field-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+
+.field-radio input {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+  accent-color: var(--accent, var(--primary));
+  cursor: pointer;
+}
+
 .header-list {
   list-style: none;
   margin: 0.75rem 0 0;

@@ -7,6 +7,7 @@ import { attachNetworkCollector } from "./network-collector";
 import type {
   CheckResponse,
   DnsOverride,
+  HarFormat,
   HeaderPair,
   NavigationTimingSnapshot,
 } from "./types";
@@ -15,10 +16,10 @@ const NAVIGATION_TIMEOUT_MS = 45_000;
 const NETWORK_IDLE_BUDGET_MS = 5_000;
 const MAX_HTML_CHARS = 2_000_000;
 /**
- * Soft cap for HAR payload size (bytes on disk ≈ UTF-8 chars for typical HAR JSON).
+ * Soft cap for HAR archive size in bytes (zip on disk, or embed `.har` file size).
  * Over this limit the check still succeeds; HAR is omitted and `harError` is set.
  */
-const MAX_HAR_CHARS = 25_000_000;
+const MAX_HAR_BYTES = 25_000_000;
 
 function toHeaderPairs(headers: Record<string, string>): HeaderPair[] {
   return Object.entries(headers)
@@ -80,6 +81,7 @@ export async function fetchWithPlaywright(
   dnsOverride: DnsOverride | null = null,
   ignoreCertErrors = false,
   captureHar = false,
+  harFormat: HarFormat = "zip",
 ): Promise<CheckResponse> {
   const started = Date.now();
   const browser = await chromium.launch({
@@ -90,12 +92,19 @@ export async function fetchWithPlaywright(
   let context: BrowserContext | null = null;
   let harDir: string | null = null;
   let harPath: string | null = null;
+  const effectiveHarFormat: HarFormat | null = captureHar ? harFormat : null;
 
   try {
     if (captureHar) {
       // Ephemeral OS temp only — never under the app tree; deleted after read.
       harDir = await mkdtemp(join(tmpdir(), "url-checker-har-"));
-      harPath = join(harDir, "session.har");
+      if (harFormat === "zip") {
+        // attach → binaries as zip entries (not base64 in HAR JSON)
+        harPath = join(harDir, "session.har.zip");
+      } else {
+        // embed → single .har; binaries base64-encoded inside JSON
+        harPath = join(harDir, "session.har");
+      }
     }
 
     context = await browser.newContext({
@@ -106,7 +115,9 @@ export async function fetchWithPlaywright(
             recordHar: {
               path: harPath,
               mode: "full" as const,
-              content: "embed" as const,
+              content: (harFormat === "zip" ? "attach" : "embed") as
+                | "attach"
+                | "embed",
             },
           }
         : {}),
@@ -171,21 +182,25 @@ export async function fetchWithPlaywright(
     context = null;
 
     let har: string | null = null;
+    let harZipBase64: string | null = null;
     let harError: string | null = null;
-    if (harPath) {
+    if (harPath && effectiveHarFormat) {
       try {
         const { size } = await stat(harPath);
-        if (size > MAX_HAR_CHARS) {
+        if (size > MAX_HAR_BYTES) {
           harError =
             `HAR download unavailable: session archive is too large ` +
-            `(${size.toLocaleString()} bytes; limit ${MAX_HAR_CHARS.toLocaleString()}). ` +
+            `(${size.toLocaleString()} bytes; limit ${MAX_HAR_BYTES.toLocaleString()}). ` +
             `Page results below are still complete.`;
+        } else if (effectiveHarFormat === "zip") {
+          const buf = await readFile(harPath);
+          harZipBase64 = buf.toString("base64");
         } else {
           const raw = await readFile(harPath, "utf8");
-          if (raw.length > MAX_HAR_CHARS) {
+          if (raw.length > MAX_HAR_BYTES) {
             harError =
               `HAR download unavailable: session archive is too large ` +
-              `(${raw.length.toLocaleString()} chars; limit ${MAX_HAR_CHARS.toLocaleString()}). ` +
+              `(${raw.length.toLocaleString()} chars; limit ${MAX_HAR_BYTES.toLocaleString()}). ` +
               `Page results below are still complete.`;
           } else {
             har = raw;
@@ -193,6 +208,7 @@ export async function fetchWithPlaywright(
         }
       } catch (err) {
         har = null;
+        harZipBase64 = null;
         harError =
           err instanceof Error
             ? `HAR download unavailable: ${err.message}`
@@ -217,7 +233,9 @@ export async function fetchWithPlaywright(
       navigationTiming,
       dnsOverride,
       ignoreCertErrors,
+      harFormat: effectiveHarFormat,
       har,
+      harZipBase64,
       harError,
       timingMs: Date.now() - started,
     };

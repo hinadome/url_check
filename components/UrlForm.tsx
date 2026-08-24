@@ -2,7 +2,12 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { HeaderEditor } from "./HeaderEditor";
-import type { DnsOverride, FeatureFlags, HeaderPair } from "@/lib/types";
+import type {
+  DnsOverride,
+  FeatureFlags,
+  HarFormat,
+  HeaderPair,
+} from "@/lib/types";
 
 export type UrlFormSubmit = {
   url: string;
@@ -10,6 +15,7 @@ export type UrlFormSubmit = {
   dnsOverride?: DnsOverride;
   ignoreCertErrors: boolean;
   captureHar: boolean;
+  harFormat: HarFormat;
 };
 
 type UrlFormProps = {
@@ -29,6 +35,7 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
   const [dnsIp, setDnsIp] = useState("");
   const [ignoreCertErrors, setIgnoreCertErrors] = useState(false);
   const [captureHar, setCaptureHar] = useState(false);
+  const [harFormat, setHarFormat] = useState<HarFormat>("zip");
   const [flags, setFlags] = useState<FeatureFlags>(DEFAULT_FLAGS);
 
   useEffect(() => {
@@ -54,7 +61,9 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
 
   useEffect(() => {
     if (!flags.allowIgnoreCertErrors) setIgnoreCertErrors(false);
-    if (!flags.allowCaptureHar) setCaptureHar(false);
+    if (!flags.allowCaptureHar) {
+      setCaptureHar(false);
+    }
   }, [flags]);
 
   const handleSubmit = (e: FormEvent) => {
@@ -78,12 +87,14 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
           }
         : undefined;
 
+    const wantHar = flags.allowCaptureHar && captureHar;
     onSubmit({
       url: trimmed,
       headers: headers.filter((h) => h.name.trim()),
       dnsOverride,
       ignoreCertErrors: flags.allowIgnoreCertErrors && ignoreCertErrors,
-      captureHar: flags.allowCaptureHar && captureHar,
+      captureHar: wantHar,
+      harFormat: wantHar ? harFormat : "zip",
     });
   };
 
@@ -155,22 +166,62 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
       )}
 
       {flags.allowCaptureHar && (
-        <label className="field-checkbox">
-          <input
-            type="checkbox"
-            checked={captureHar}
-            onChange={(e) => setCaptureHar(e.target.checked)}
-            disabled={loading}
-          />
-          <span>
-            Capture HAR
-            <span className="muted field-checkbox-hint">
-              {" "}
-              — record the Playwright session as a HAR file for download after the
-              check (not stored on the server)
+        <>
+          <label className="field-checkbox">
+            <input
+              type="checkbox"
+              checked={captureHar}
+              onChange={(e) => setCaptureHar(e.target.checked)}
+              disabled={loading}
+            />
+            <span>
+              Capture HAR
+              <span className="muted field-checkbox-hint">
+                {" "}
+                — record the Playwright session for download (not stored on the
+                server)
+              </span>
             </span>
-          </span>
-        </label>
+          </label>
+
+          {captureHar && (
+            <fieldset className="har-format" disabled={loading}>
+              <legend>HAR format</legend>
+              <label className="field-radio">
+                <input
+                  type="radio"
+                  name="harFormat"
+                  value="zip"
+                  checked={harFormat === "zip"}
+                  onChange={() => setHarFormat("zip")}
+                />
+                <span>
+                  Zip (binaries as files)
+                  <span className="muted field-checkbox-hint">
+                    {" "}
+                    — <code>.har.zip</code>, Playwright <code>content: attach</code>
+                  </span>
+                </span>
+              </label>
+              <label className="field-radio">
+                <input
+                  type="radio"
+                  name="harFormat"
+                  value="json"
+                  checked={harFormat === "json"}
+                  onChange={() => setHarFormat("json")}
+                />
+                <span>
+                  JSON (binaries as base64)
+                  <span className="muted field-checkbox-hint">
+                    {" "}
+                    — single <code>.har</code>, Playwright <code>content: embed</code>
+                  </span>
+                </span>
+              </label>
+            </fieldset>
+          )}
+        </>
       )}
 
       <button type="submit" className="btn btn-primary" disabled={loading}>

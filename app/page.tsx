@@ -8,7 +8,7 @@ import { NetworkRequestsPanel } from "@/components/NetworkRequestsPanel";
 import { ResourceSummary } from "@/components/ResourceSummary";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UrlForm, type UrlFormSubmit } from "@/components/UrlForm";
-import { exportHar } from "@/lib/export";
+import { exportHar, hasHarDownload } from "@/lib/export";
 import type { CheckResponse } from "@/lib/types";
 
 export default function Home() {
@@ -99,19 +99,22 @@ export default function Home() {
                   TLS: <strong>certificate errors ignored</strong>
                 </span>
               )}
-              {result.har && (
+              {hasHarDownload(result) && (
                 <span>
-                  HAR:{" "}
+                  HAR
+                  {result.harFormat ? ` (${result.harFormat})` : ""}:{" "}
                   <button
                     type="button"
                     className="link-button"
                     onClick={() => exportHar(result)}
                   >
-                    Download session HAR
+                    {result.harFormat === "json"
+                      ? "Download session HAR"
+                      : "Download session HAR zip"}
                   </button>
                 </span>
               )}
-              {result.harError && !result.har && (
+              {result.harError && !hasHarDownload(result) && (
                 <span className="meta-har-error">
                   HAR: <strong>download unavailable</strong>
                 </span>
@@ -120,7 +123,7 @@ export default function Home() {
             <ExportMenu result={result} />
           </div>
 
-          {result.harError && !result.har && (
+          {result.harError && !hasHarDownload(result) && (
             <div className="alert alert-warning" role="status">
               {result.harError}
             </div>
