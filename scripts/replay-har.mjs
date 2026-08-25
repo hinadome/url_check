@@ -27,7 +27,6 @@
  */
 
 import { chromium } from "playwright";
-import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -40,6 +39,13 @@ import { tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { stdin as stdinStream } from "node:process";
 import { fileURLToPath } from "node:url";
+
+import {
+  findHarInDir,
+  isZipFile,
+  readHarJsonFromZip,
+  unzipToTemp,
+} from "./lib/har-archive.mjs";
 
 function usage(exitCode = 1) {
   console.error(`Usage:
@@ -138,12 +144,6 @@ function parseArgs(argv) {
     usage(1);
   }
   return opts;
-}
-
-function findHarInDir(dir) {
-  const candidate = join(dir, "har.har");
-  if (existsSync(candidate)) return candidate;
-  throw new Error(`No har.har in ${dir}`);
 }
 
 function looksLikeUrl(s) {
@@ -253,22 +253,11 @@ function firstDocumentUrlFromFile(harPath) {
 /** Read har.har from a zip without extracting everything. */
 function firstDocumentUrlFromZip(zipPath) {
   try {
-    const raw = execFileSync("unzip", ["-p", resolve(zipPath), "har.har"], {
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-    });
+    const raw = readHarJsonFromZip(zipPath);
     return firstDocumentUrlFromHarJson(raw);
   } catch {
     return null;
   }
-}
-
-function unzipToTemp(zipPath) {
-  const abs = resolve(zipPath);
-  if (!existsSync(abs)) throw new Error(`Zip not found: ${abs}`);
-  const dir = mkdtempSync(join(tmpdir(), "url-checker-har-"));
-  execFileSync("unzip", ["-q", "-o", abs, "-d", dir], { stdio: "inherit" });
-  return dir;
 }
 
 function readStdin() {
@@ -484,13 +473,7 @@ export function openInputPath(filePath) {
   const ext = extname(abs).toLowerCase();
   const name = basename(abs).toLowerCase();
 
-  if (ext === ".zip" || name.endsWith(".har.zip")) {
-    return { mode: "zip", harPath: abs, cleanupDir: null };
-  }
-
-  const head = readFileSync(abs).subarray(0, 4);
-  if (head[0] === 0x50 && head[1] === 0x4b) {
-    // PK zip magic (even if extension wrong)
+  if (ext === ".zip" || name.endsWith(".har.zip") || isZipFile(abs)) {
     return { mode: "zip", harPath: abs, cleanupDir: null };
   }
 

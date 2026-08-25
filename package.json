@@ -10,6 +10,7 @@
     "start": "next start",
     "lint": "eslint",
     "postinstall": "playwright install chromium",
+    "convert-har": "node scripts/convert-har.mjs",
     "deploy:vm": "bash scripts/deploy-vm.sh",
     "deploy:container": "bash scripts/deploy-container.sh"
   },

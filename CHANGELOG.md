@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Server feature gates **`ALLOW_IGNORE_CERT_ERRORS`** / **`ALLOW_CAPTURE_HAR`** / **`ALLOW_HTTP_PROTOCOL_CONTROLS`** (default **allow** when unset; disable with `0`/`false`/`no`/`off`): enforced in `POST /api/check` (400 if client requests a disabled option); UI loads `GET /api/config` and hides controls. Documented in [`.env.example`](.env.example) and [DEPLOYMENT.md](DEPLOYMENT.md#feature-gates-env--default-allow)
 - **HTTP protocol controls** (below Force DNS): **HTTP/1.1 only** preset, **Disable HTTP/2** (`--disable-http2`), **Disable HTTP/3 (QUIC)** (`--disable-quic`). Playwright has no `httpVersion` request param — Chromium launch args only. Result echoes `disableHttp2` / `disableHttp3` / `http11Only` / `chromiumProtocolArgs`. Plan: [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md)
 - **HAR replay script** [`scripts/replay-har.mjs`](scripts/replay-har.mjs): replay URL Checker or DevTools HAR exports offline via Playwright `routeFromHAR`; supports `.har.zip`, embed `.har`, `harZipBase64`, check JSON; progressive screenshots. Guide: [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md)
+- **HAR format converter** [`scripts/convert-har.mjs`](scripts/convert-har.mjs): attach `.har.zip` ↔ embed `.har` (both directions); shared [`scripts/lib/har-archive.mjs`](scripts/lib/har-archive.mjs); strict by default; compact embed JSON (Playwright-like). Guide: [`CONVERT_HAR.md`](CONVERT_HAR.md); plan: [`docs/HAR_ZIP_TO_EMBED_CONVERT_PLAN.md`](docs/HAR_ZIP_TO_EMBED_CONVERT_PLAN.md)
 
 ### Fixed
 
@@ -102,6 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md) — Chromium `--disable-http2` / `--disable-quic` design (implemented)
 - Deploy script headers: [`scripts/deploy-vm.sh`](scripts/deploy-vm.sh), [`scripts/deploy-container.sh`](scripts/deploy-container.sh) — HAR json/zip defaults, hang fix, headless HTTP/2, feature gates
 - [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) — HAR replay CLI (`scripts/replay-har.mjs`), DevTools exports, offline verification, progressive screenshots
+- [`CONVERT_HAR.md`](CONVERT_HAR.md) — attach `.har.zip` ↔ embed `.har` converter (`scripts/convert-har.mjs`)
 - `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.
 
 ---

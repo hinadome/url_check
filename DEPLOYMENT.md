@@ -16,6 +16,7 @@ Related files:
 | [`deploy/nginx-url-checker-https.conf`](deploy/nginx-url-checker-https.conf) | nginx HTTPS site template (TLS + HTTP→HTTPS redirect) |
 | [`scripts/setup-https.sh`](scripts/setup-https.sh) | Post-deploy Let's Encrypt cert + HTTPS nginx config (domain required) |
 | [`scripts/replay-har.mjs`](scripts/replay-har.mjs) | Optional **client-side** HAR replay (not part of deploy); see [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) |
+| [`scripts/convert-har.mjs`](scripts/convert-har.mjs) | Optional **client-side** zip ↔ embed convert; see [`CONVERT_HAR.md`](CONVERT_HAR.md) |
 | [`Dockerfile`](Dockerfile) | Production image (Playwright base + Next.js) |
 | [`docker-compose.yml`](docker-compose.yml) | One-service Compose stack (`shm_size` for Chromium) |
 | [`vercel.json`](vercel.json) / [`netlify.toml`](netlify.toml) | Optional serverless UI hosting (Playwright often unreliable) |
@@ -67,7 +68,7 @@ That path is idempotent for updates: stops `url-checker` if running, runs `npm c
 - Headless `ERR_HTTP2_PROTOCOL_ERROR` mitigation (headed UA / `sec-ch-ua`; optional `--disable-http2` retry) — see [README — Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco)
 - HTTP protocol Chromium args (`--disable-http2` / `--disable-quic`) and feature gates (`ALLOW_IGNORE_CERT_ERRORS`, `ALLOW_CAPTURE_HAR`, `ALLOW_HTTP_PROTOCOL_CONTROLS`)
 
-Set `ALLOW_*` in `.env` or systemd/Compose and **restart**. Offline HAR replay is optional client-side — [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) / [`scripts/replay-har.mjs`](scripts/replay-har.mjs) — not started by the deploy scripts.
+Set `ALLOW_*` in `.env` or systemd/Compose and **restart**. Offline HAR tools (not started by deploy): replay — [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) / [`scripts/replay-har.mjs`](scripts/replay-har.mjs); convert zip ↔ embed — [`CONVERT_HAR.md`](CONVERT_HAR.md) / [`scripts/convert-har.mjs`](scripts/convert-har.mjs).
 
 ### Requirements
 
@@ -216,7 +217,7 @@ ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
 | HAR + heavy sites (ops) | When Capture HAR is on, the app **does not** call `response.body()` for the Network Content tab (bodies are in the HAR). Body reads elsewhere are capped (5s each; flush ≤15s) so Costco/Akamai long-lived streams cannot stall the check. Keep `PROXY_READ_TIMEOUT` ≥ ~120s. Details: [README — Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco). |
 | HAR soft limit | `MAX_HAR_BYTES` = `45_000_000` (~45 MB) in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Applies to the **archive file** (zip or embed `.har`). Over that, the **check still succeeds**; `har` / `harZipBase64` are omitted and the UI shows `harError`. Raise the constant and rebuild to change it. |
 | Large JSON | A successful check with HAR can still be tens of MB (large `har` string or `harZipBase64` + screenshot). Network Content bodies are omitted when HAR is on (smaller than duplicating every body in JSON). nginx streams upstream (`proxy_buffering off`). Watch Node heap, `/tmp`, and proxy timeouts if you raise `MAX_HAR_BYTES`. |
-| **Replay (offline)** | Not a server feature. After download, replay exports with [`scripts/replay-har.mjs`](scripts/replay-har.mjs) (URL Checker JSON/zip HAR, DevTools `.har`, `harZipBase64`). Guide: [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md). Requires Node + Chromium on the machine running the script. |
+| **Replay (offline)** | Not a server feature. After download, replay with [`scripts/replay-har.mjs`](scripts/replay-har.mjs) ([`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md)). Convert zip ↔ embed with [`scripts/convert-har.mjs`](scripts/convert-har.mjs) ([`CONVERT_HAR.md`](CONVERT_HAR.md)). |
 
 **Capture HAR formats**
 
@@ -492,6 +493,7 @@ git checkout <ref>
 
 - App overview and API: [README.md](README.md) (incl. [HTTP protocol controls](README.md#http-protocol-controls), [HAR capture](README.md#har-capture-playwright-session-archive) — JSON default / Zip, [Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco), [Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco))
 - HAR replay (post-download): [REPLAY_SCRIPT.md](REPLAY_SCRIPT.md)
+- HAR convert zip ↔ embed: [CONVERT_HAR.md](CONVERT_HAR.md)
 - HTTP protocol design: [docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md)
 - HAR dual-format design notes: [docs/HAR_ZIP_IMPLEMENT_PLAN.md](docs/HAR_ZIP_IMPLEMENT_PLAN.md)
 - Change history: [CHANGELOG.md](CHANGELOG.md)

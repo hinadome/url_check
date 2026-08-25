@@ -625,6 +625,8 @@ When Capture HAR is on, choose a format (UI order; **JSON** is default):
 3. **Explicitly delete** that temp directory via `cleanupHarDir()` → `fs.promises.rm(…, { recursive: true, force: true })` in a `finally` block (also in the outer `finally` as a safety net). Soft oversize still deletes the temp files; page results still render.
 4. Download from meta / **Export** (client-side only).
 
+Offline: convert between zip and embed with [`scripts/convert-har.mjs`](scripts/convert-har.mjs) — see [`CONVERT_HAR.md`](CONVERT_HAR.md).
+
 Hard process kills may leave orphaned `url-checker-har-*` dirs under OS temp; see [How content is stored](#how-content-is-stored).
 
 #### Capture HAR hang on heavy sites (e.g. Costco)

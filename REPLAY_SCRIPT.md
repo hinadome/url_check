@@ -299,7 +299,7 @@ Common failures:
 
 - Replay reconstructs **network responses**, not a perfect offline clone of every site behavior (cookies, anti-bot, post-load randomness, service workers, etc. may differ).
 - Only URLs fetched during the original capture can be served from the HAR.
-- Chrome DevTools “Import HAR” expects a single embed `.har`; Playwright **attach** `.har.zip` is best replayed with this script, not DevTools import.
+- Chrome DevTools “Import HAR” expects a single embed `.har`; Playwright **attach** `.har.zip` is best replayed with this script, not DevTools import. Convert zip ↔ embed with [`scripts/convert-har.mjs`](scripts/convert-har.mjs) ([`CONVERT_HAR.md`](CONVERT_HAR.md)).
 - Soft size limits inside URL Checker (`MAX_HAR_BYTES`) may omit HAR from the API (`harError`) even when the page check succeeds — there is then nothing to replay.
 
 ---
@@ -307,7 +307,9 @@ Common failures:
 ## Related docs
 
 - [`README.md`](README.md) — HAR capture (`zip` / `json`), export, API fields `har` / `harZipBase64`
+- [`CONVERT_HAR.md`](CONVERT_HAR.md) — convert attach `.har.zip` ↔ embed `.har`
 - [`docs/HAR_ZIP_IMPLEMENT_PLAN.md`](docs/HAR_ZIP_IMPLEMENT_PLAN.md) — attach zip design notes
+- [`docs/HAR_ZIP_TO_EMBED_CONVERT_PLAN.md`](docs/HAR_ZIP_TO_EMBED_CONVERT_PLAN.md) — converter design
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) — feature gate `ALLOW_CAPTURE_HAR`
 
 ---
