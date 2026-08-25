@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Build and run URL Checker in Docker (Compose).
 #
-# Runtime options (Compose environment:, not script flags): ALLOW_IGNORE_CERT_ERRORS,
-# ALLOW_CAPTURE_HAR, NODE_OPTIONS — see docker-compose.yml and DEPLOYMENT.md.
-# Optional HAR replay after download: scripts/replay-har.mjs (REPLAY_SCRIPT.md).
+# Runtime options (Compose environment:, not script flags) — see docker-compose.yml
+# and DEPLOYMENT.md:
+#   ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR / ALLOW_HTTP_PROTOCOL_CONTROLS
+#   NODE_OPTIONS (optional heap for large HAR + screenshot JSON)
+# HTTP protocol controls (Chromium --disable-http2 / --disable-quic) ship with the
+# app after rebuild; no Compose service changes required. Optional HAR replay:
+# scripts/replay-har.mjs (REPLAY_SCRIPT.md).
 #
 # Usage:
 #   ./scripts/deploy-container.sh           # build + up -d

@@ -11,7 +11,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 1. [Overview](#overview)
 2. [Features](#features)
 3. [Architecture](#architecture) (includes [Screenshot timing](#screenshot-timing))
-4. [Force DNS resolution](#force-dns-resolution)
+4. [Force DNS resolution](#force-dns-resolution) (includes [HTTP protocol controls](#http-protocol-controls))
 5. [How content is stored](#how-content-is-stored) — backend vs browser; theme `localStorage`; ephemeral HAR temp
 6. [User interface](#user-interface) (includes [Resource summary vs Network requests](#resource-summary-vs-network-requests), [Plain text and non-HTML responses](#plain-text-and-non-html-responses))
 7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only), [Timing tab](#timing-tab-network-rows-only) / [Resource timing](#resource-timing) / [Navigation timing](#navigation-timing))
@@ -56,8 +56,9 @@ Typical uses:
 | Custom headers | Add/remove name–value pairs sent with the Playwright request context |
 | Force DNS | Optional hostname → IP map via Chromium `--host-resolver-rules` |
 | Ignore cert errors | Optional checkbox (default **off**); Playwright `ignoreHTTPSErrors` for self-signed / expired TLS |
+| HTTP protocol | Optional (below Force DNS): **HTTP/1.1 only**, Disable HTTP/2, Disable HTTP/3 (QUIC) — Chromium launch args (see [HTTP protocol controls](#http-protocol-controls)) |
 | Capture HAR | Optional checkbox (default **off**); Playwright `recordHar` → downloadable HAR after the check (not stored on the server) |
-| Status / meta | Final URL, HTTP status, timing, DNS override, TLS ignore / HAR download (or HAR size warning) when used |
+| Status / meta | Final URL, HTTP status, timing, DNS override, TLS ignore / HTTP protocol / HAR download (or HAR size warning) when used |
 | Theme | Light / dark mode toggle (persisted in `localStorage`; follows system preference on first visit; no blocking theme `<script>`) |
 | HTTP headers | Main-document request/response headers via **Request** / **Response** tabs |
 | Resource summary | Links, images, stylesheets, scripts, iframes, other URLs from the live DOM |
@@ -71,13 +72,14 @@ Typical uses:
 
 ```text
 Browser UI (React)
-    │  POST /api/check  { url, headers?, dnsOverride?, ignoreCertErrors?, captureHar? }
+    │  POST /api/check  { url, headers?, dnsOverride?, ignoreCertErrors?, disableHttp2?, disableHttp3?, http11Only?, captureHar?, harFormat? }
     ▼
 Next.js API route (Node.js)
     │  validate URL + headers + DNS override (SSRF guards)
     ▼
 Playwright Chromium
     │  optional: --host-resolver-rules=MAP host ip
+    │  optional: --disable-http2 / --disable-quic
     │  optional: ignoreHTTPSErrors
     │  optional: recordHar (attach → .har.zip) → response field `harZipBase64`
     │  goto → capture HTML, screenshot, headers, DOM resources, network
@@ -178,14 +180,39 @@ Because the hostname in the URL is unchanged, certificates are validated for tha
 
 To proceed anyway (self-signed, expired, or name mismatch), check **Ignore certificate errors** in the UI or send `"ignoreCertErrors": true` on `POST /api/check`. That sets Playwright’s browser context `ignoreHTTPSErrors: true` (per-check default **off**). Server admins can hide/disable this with `ALLOW_IGNORE_CERT_ERRORS=0` (default **allow** when unset; see [DEPLOYMENT.md](DEPLOYMENT.md#feature-gates-env--default-allow)).
 
+### HTTP protocol controls
+
+Playwright has **no** `httpVersion` request parameter. To restrict negotiation, URL Checker passes **allowlisted** Chromium launch args only (clients cannot send arbitrary flags).
+
+**Form placement:** below **Force DNS resolution**, above Custom headers. Per-check default **off**. UI order (top → bottom):
+
+| UI control | Chromium arg | Notes |
+|------------|--------------|-------|
+| **HTTP/1.1 only** | `--disable-http2` + `--disable-quic` | Preset: sets both disables; unchecking either independent box clears the preset |
+| **Disable HTTP/2** | `--disable-http2` | Does **not** disable HTTP/3 — flags are independent |
+| **Disable HTTP/3 (QUIC)** | `--disable-quic` | There is no `--disable-http3`; HTTP/3 uses QUIC |
+
+**Effective matrix**
+
+| Selection | Typical negotiated versions |
+|-----------|----------------------------|
+| Both disables off | Auto (`http/1.1`, `h2`, and/or `h3` as ALPN allows) |
+| Disable HTTP/2 only | No `h2`; may still use `h3` or `http/1.1` |
+| Disable HTTP/3 only | No `h3`; may still use `h2` or `http/1.1` |
+| Both / HTTP/1.1 only | Typically `http/1.1` |
+
+Negotiated version per resource still appears in Network → **HTTP** (`response.httpVersion()`). Meta strip and result JSON echo `disableHttp2`, `disableHttp3`, `http11Only`, and `chromiumProtocolArgs` (e.g. `["--disable-http2","--disable-quic"]`).
+
+Admins: `ALLOW_HTTP_PROTOCOL_CONTROLS=0` hides the UI and rejects API requests that enable these options (**400**). Default **allow** when unset. Plan: [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md).
+
 ### Code map
 
 ```text
-components/UrlForm.tsx      → collect dnsHost / dnsIp / ignoreCertErrors / captureHar
-app/api/check/route.ts      → validateDnsOverride + validateUrl({ skipDnsLookup })
+components/UrlForm.tsx      → collect dns / ignoreCert / HTTP protocol / captureHar
+app/api/check/route.ts      → validateDnsOverride + validateUrl({ skipDnsLookup }) + gates
 lib/validate.ts             → validateDnsOverride(), validateUrl()
-lib/playwright-fetch.ts     → --host-resolver-rules=MAP …; ignoreHTTPSErrors; recordHar
-lib/types.ts                → DnsOverride + ignoreCertErrors + captureHar / harZipBase64 / harError
+lib/playwright-fetch.ts     → --host-resolver-rules; --disable-http2/--disable-quic; ignoreHTTPSErrors; recordHar
+lib/types.ts                → DnsOverride + protocol flags + captureHar / harZipBase64 / harError
 ```
 
 ---
@@ -250,8 +277,8 @@ Export JSON / PNG / HTML / HAR / CSV — only if the user clicks **Export**; sav
 Layout (top to bottom after a successful check):
 
 1. **Header** — product title and **Light / Dark** theme toggle (persisted).
-2. **Form** — URL, optional force DNS (host + IP), custom header editor, then **Ignore certificate errors** and **Capture HAR** (both default off), submit.
-3. **Meta** — status, final URL, timing, DNS override / TLS ignore / HAR download link (or HAR unavailable) when used, and **Export** menu. Oversized HAR shows a warning alert; page results still render.
+2. **Form** — URL, optional force DNS (host + IP), optional **HTTP protocol** controls, custom header editor, then **Ignore certificate errors** and **Capture HAR** (default off), submit.
+3. **Meta** — status, final URL, timing, DNS override / TLS ignore / HTTP protocol restrictions / HAR download link (or HAR unavailable) when used, and **Export** menu. Oversized HAR shows a warning alert; page results still render.
 4. **HTTP headers** — main-document headers with **Request** / **Response** tabs (full-width table per tab).
 5. **Resource summary** — collapsible lists of URLs found in the rendered DOM.
 6. **Full content**
@@ -703,6 +730,9 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
     "ip": "203.0.113.10"
   },
   "ignoreCertErrors": false,
+  "disableHttp2": false,
+  "disableHttp3": false,
+  "http11Only": false,
   "captureHar": false
 }
 ```
@@ -713,6 +743,9 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
 | `headers` | `{ name, value }[]` | No | Extra headers applied to the Playwright browser context |
 | `dnsOverride` | `{ host, ip }` | No | Force Chromium to resolve `host` to `ip` (must match URL hostname; private IPs blocked) |
 | `ignoreCertErrors` | boolean | No | When `true`, Playwright context uses `ignoreHTTPSErrors` (self-signed / expired TLS). Default `false` / omitted. Rejected with **400** if server has `ALLOW_IGNORE_CERT_ERRORS` disabled |
+| `disableHttp2` | boolean | No | Chromium `--disable-http2`. Default `false`. Rejected with **400** if `ALLOW_HTTP_PROTOCOL_CONTROLS` disabled |
+| `disableHttp3` | boolean | No | Disable HTTP/3 via Chromium `--disable-quic` (no `--disable-http3`). Default `false`. Same gate |
+| `http11Only` | boolean | No | Preset: expands to both disables (≈ HTTP/1.1 only). Default `false`. Same gate |
 | `captureHar` | boolean | No | When `true`, record Playwright HAR and return `har` or `harZipBase64` per `harFormat`. Rejected with **400** if `ALLOW_CAPTURE_HAR` disabled |
 | `harFormat` | `"zip"` \| `"json"` | No | Packaging when `captureHar` is true. Default **`zip`**. `zip` = attach / binaries as files; `json` = embed / binaries as base64 |
 
@@ -784,6 +817,10 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
     "ip": "203.0.113.10"
   },
   "ignoreCertErrors": false,
+  "disableHttp2": false,
+  "disableHttp3": false,
+  "http11Only": false,
+  "chromiumProtocolArgs": [],
   "harFormat": null,
   "har": null,
   "harZipBase64": null,
@@ -805,6 +842,8 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
 | `navigationTiming` | Page `PerformanceNavigationTiming` snapshot, or `null` |
 | `dnsOverride` | Applied force-resolve mapping, or `null` |
 | `ignoreCertErrors` | Whether this check used Playwright `ignoreHTTPSErrors` |
+| `disableHttp2` / `disableHttp3` / `http11Only` | Protocol restrictions applied for this check |
+| `chromiumProtocolArgs` | Chromium launch args added (e.g. `["--disable-http2","--disable-quic"]`), or `[]` |
 | `harFormat` | `"zip"` \| `"json"` when HAR was requested; otherwise `null` |
 | `har` | HAR 1.2 JSON text when `harFormat: "json"` and within limit; otherwise `null` |
 | `harZipBase64` | `.har.zip` as base64 when `harFormat: "zip"` and within limit; otherwise `null` |
@@ -848,7 +887,7 @@ url_checker/
 │   ├── extract-resources.ts  # DOM URL extraction
 │   ├── network-collector.ts  # Playwright response log (IP, HTTP version, timing)
 │   ├── playwright-fetch.ts   # Browser launch + capture (+ MAP args, navigationTiming)
-│   ├── feature-flags.ts      # ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR (default allow)
+│   ├── feature-flags.ts      # ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR / ALLOW_HTTP_PROTOCOL_CONTROLS (default allow)
 │   ├── types.ts              # Shared request/response types
 │   └── validate.ts           # URL / header / DNS override guards
 ├── scripts/
@@ -938,6 +977,7 @@ Defined mainly in `lib/playwright-fetch.ts` and related libs:
 | API `maxDuration` | 60s | Next.js route limit |
 | `ALLOW_IGNORE_CERT_ERRORS` | allow when unset | Server gate; disable with `0`/`false`/`no`/`off`. See [DEPLOYMENT.md](DEPLOYMENT.md#feature-gates-env--default-allow) |
 | `ALLOW_CAPTURE_HAR` | allow when unset | Same for HAR capture |
+| `ALLOW_HTTP_PROTOCOL_CONTROLS` | allow when unset | Same for HTTP/2 / HTTP/3 / HTTP/1.1-only controls |
 
 Deploy note: the host must allow launching Chromium (sufficient RAM/CPU; often needs system libraries on Linux). **Vercel/Netlify serverless is a poor fit for Playwright** unless you add a serverless browser strategy — prefer `next start` on a Node server for production checks. See [Deployment](#deployment-vercel--netlify).
 
@@ -956,6 +996,7 @@ Built-in guards (v1):
 - Optional DNS override must use a **public** IP and a host that **matches** the URL hostname; Node DNS lookup is skipped only when a valid override is present (prevents using MAP to reach RFC1918 addresses).
 - **Ignore certificate errors** is **off** per check by default; the server **allows** the option when `ALLOW_IGNORE_CERT_ERRORS` is unset. Set `ALLOW_IGNORE_CERT_ERRORS=0` to hide the UI control and reject API requests that ask for it. Enabling ignore only relaxes TLS verification inside Playwright and does not weaken SSRF / private-IP guards.
 - **Capture HAR** is **off** per check by default; the server **allows** the option when `ALLOW_CAPTURE_HAR` is unset. Set `ALLOW_CAPTURE_HAR=0` to disable. When on, HAR is written only to an OS temp path during the check, returned in the API response, then deleted — not stored in the app directory or a database.
+- **HTTP protocol controls** are **off** per check by default; the server **allows** them when `ALLOW_HTTP_PROTOCOL_CONTROLS` is unset. Set `ALLOW_HTTP_PROTOCOL_CONTROLS=0` to disable. Only allowlisted Chromium args (`--disable-http2`, `--disable-quic`) are applied — clients cannot pass arbitrary launch flags.
 - HTML preview uses an empty `sandbox` attribute so scripts do not execute in the UI.
 
 This is not a full multi-tenant hardening suite. Do not expose an open instance to the public internet without auth, rate limits, and further SSRF review.
@@ -972,7 +1013,8 @@ This is not a full multi-tenant hardening suite. Do not expose an open instance 
 - Sites that block headless browsers, require interactive CAPTCHAs, or depend on special client TLS may fail or look incomplete.
 - DNS override maps a single exact hostname (no multi-host or wildcard UI yet).
 - Third-party hosts are never remapped by the DNS override.
-- Export is client-side only (no server archive store); Network CSV is a metadata index (no header/body cells); HAR is optional via **Capture HAR** as `.har.zip` (`content: "attach"`) subject to `MAX_HAR_BYTES` (see [HAR capture](#har-capture-playwright-session-archive)).
+- Export is client-side only (no server archive store); Network CSV is a metadata index (no header/body cells); HAR is optional via **Capture HAR** as `.har.zip` or `.har` subject to `MAX_HAR_BYTES` (see [HAR capture](#har-capture-playwright-session-archive)).
+- HTTP protocol controls only restrict Chromium negotiation via `--disable-http2` / `--disable-quic`; they cannot force HTTP/2 or HTTP/3, and Playwright has no per-request `httpVersion` API (see [HTTP protocol controls](#http-protocol-controls)).
 - No PDF export or editable HTML workspace.
 - Resource summary unique-URL totals are not expected to equal Network request row counts (different sources; see [Resource summary vs Network requests](#resource-summary-vs-network-requests)).
 

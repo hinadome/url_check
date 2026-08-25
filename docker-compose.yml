@@ -21,6 +21,7 @@ services:
       # Feature gates (default allow when unset). Disable with 0/false/no/off:
       # ALLOW_IGNORE_CERT_ERRORS: "0"
       # ALLOW_CAPTURE_HAR: "0"
+      # ALLOW_HTTP_PROTOCOL_CONTROLS: "0"
     restart: unless-stopped
     # Chromium in Docker often needs more shared memory than the default 64MB
     shm_size: "1gb"

@@ -3,9 +3,13 @@
 # Safe to re-run after pulling app updates: stops the unit (if active), rebuilds,
 # rewrites the systemd unit, restarts the app, and only touches this app's nginx site.
 #
-# Runtime options (not script flags): Capture HAR (zip/json), ignore cert errors,
-# ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR — see DEPLOYMENT.md § "App features
-# that affect the host". Optional HAR replay: scripts/replay-har.mjs (REPLAY_SCRIPT.md).
+# Runtime options (not script flags) — see DEPLOYMENT.md § "App features that affect
+# the host" and README § "HTTP protocol controls":
+#   - Capture HAR (zip/json), ignore cert errors
+#   - HTTP protocol: --disable-http2 / --disable-quic (ALLOW_HTTP_PROTOCOL_CONTROLS)
+#   - Feature gates: ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR /
+#     ALLOW_HTTP_PROTOCOL_CONTROLS (default allow when unset)
+# Optional HAR replay (client-side): scripts/replay-har.mjs (REPLAY_SCRIPT.md).
 #
 # Usage:
 #   ./scripts/deploy-vm.sh              # install deps, build, systemd + nginx front proxy

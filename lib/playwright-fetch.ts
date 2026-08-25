@@ -36,6 +36,42 @@ function hostResolverArgs(dnsOverride: DnsOverride | null): string[] {
   return [`--host-resolver-rules=MAP ${dnsOverride.host} ${dnsOverride.ip}`];
 }
 
+/**
+ * Allowlisted Chromium network switches for HTTP version restrictions.
+ * HTTP/3 is disabled via `--disable-quic` (no official `--disable-http3`).
+ */
+export function httpProtocolArgs(opts: {
+  disableHttp2: boolean;
+  disableHttp3: boolean;
+}): string[] {
+  const args: string[] = [];
+  if (opts.disableHttp2) args.push("--disable-http2");
+  if (opts.disableHttp3) args.push("--disable-quic");
+  return args;
+}
+
+/** Expand request flags (including http11Only preset) into launch + echo fields. */
+export function resolveHttpProtocolOptions(input: {
+  disableHttp2?: boolean;
+  disableHttp3?: boolean;
+  http11Only?: boolean;
+}): {
+  disableHttp2: boolean;
+  disableHttp3: boolean;
+  http11Only: boolean;
+  chromiumProtocolArgs: string[];
+} {
+  const http11Only = input.http11Only === true;
+  const disableHttp2 = http11Only || input.disableHttp2 === true;
+  const disableHttp3 = http11Only || input.disableHttp3 === true;
+  return {
+    disableHttp2,
+    disableHttp3,
+    http11Only: disableHttp2 && disableHttp3,
+    chromiumProtocolArgs: httpProtocolArgs({ disableHttp2, disableHttp3 }),
+  };
+}
+
 async function captureNavigationTiming(
   page: import("playwright").Page,
 ): Promise<NavigationTimingSnapshot | null> {
@@ -82,11 +118,17 @@ export async function fetchWithPlaywright(
   ignoreCertErrors = false,
   captureHar = false,
   harFormat: HarFormat = "zip",
+  disableHttp2 = false,
+  disableHttp3 = false,
 ): Promise<CheckResponse> {
   const started = Date.now();
+  const protocol = resolveHttpProtocolOptions({ disableHttp2, disableHttp3 });
   const browser = await chromium.launch({
     headless: true,
-    args: hostResolverArgs(dnsOverride),
+    args: [
+      ...hostResolverArgs(dnsOverride),
+      ...protocol.chromiumProtocolArgs,
+    ],
   });
 
   let context: BrowserContext | null = null;
@@ -233,6 +275,10 @@ export async function fetchWithPlaywright(
       navigationTiming,
       dnsOverride,
       ignoreCertErrors,
+      disableHttp2: protocol.disableHttp2,
+      disableHttp3: protocol.disableHttp3,
+      http11Only: protocol.http11Only,
+      chromiumProtocolArgs: protocol.chromiumProtocolArgs,
       harFormat: effectiveHarFormat,
       har,
       harZipBase64,

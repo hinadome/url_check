@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getFeatureFlags } from "@/lib/feature-flags";
-import { fetchWithPlaywright } from "@/lib/playwright-fetch";
+import {
+  fetchWithPlaywright,
+  resolveHttpProtocolOptions,
+} from "@/lib/playwright-fetch";
 import type { CheckRequest, CheckResponse, HarFormat } from "@/lib/types";
 import {
   validateDnsOverride,
@@ -10,6 +13,40 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+function emptyErrorPayload(message: string): CheckResponse {
+  return {
+    finalUrl: "",
+    status: 0,
+    title: null,
+    html: "",
+    screenshotBase64: "",
+    resources: {
+      links: [],
+      images: [],
+      stylesheets: [],
+      scripts: [],
+      iframes: [],
+      other: [],
+    },
+    requestHeaders: [],
+    responseHeaders: [],
+    networkRequests: [],
+    navigationTiming: null,
+    dnsOverride: null,
+    ignoreCertErrors: false,
+    disableHttp2: false,
+    disableHttp3: false,
+    http11Only: false,
+    chromiumProtocolArgs: [],
+    harFormat: null,
+    har: null,
+    harZipBase64: null,
+    harError: null,
+    timingMs: 0,
+    error: message,
+  };
+}
 
 export async function POST(request: Request) {
   let body: CheckRequest;
@@ -49,6 +86,13 @@ export async function POST(request: Request) {
     const wantCaptureHar = body.captureHar === true;
     const harFormat: HarFormat =
       body.harFormat === "json" ? "json" : "zip";
+    const protocol = resolveHttpProtocolOptions({
+      disableHttp2: body.disableHttp2 === true,
+      disableHttp3: body.disableHttp3 === true,
+      http11Only: body.http11Only === true,
+    });
+    const wantProtocolControls =
+      protocol.disableHttp2 || protocol.disableHttp3;
 
     if (wantIgnoreCert && !flags.allowIgnoreCertErrors) {
       throw new Error(
@@ -60,6 +104,11 @@ export async function POST(request: Request) {
         "captureHar is disabled on this server (set ALLOW_CAPTURE_HAR=1 or unset to allow)",
       );
     }
+    if (wantProtocolControls && !flags.allowHttpProtocolControls) {
+      throw new Error(
+        "HTTP protocol controls are disabled on this server (set ALLOW_HTTP_PROTOCOL_CONTROLS=1 or unset to allow)",
+      );
+    }
 
     const result = await fetchWithPlaywright(
       parsedUrl.toString(),
@@ -68,6 +117,8 @@ export async function POST(request: Request) {
       wantIgnoreCert,
       wantCaptureHar,
       harFormat,
+      protocol.disableHttp2,
+      protocol.disableHttp3,
     );
     return NextResponse.json(result);
   } catch (err) {
@@ -77,35 +128,8 @@ export async function POST(request: Request) {
         message,
       );
 
-    return NextResponse.json(
-      {
-        finalUrl: "",
-        status: 0,
-        title: null,
-        html: "",
-        screenshotBase64: "",
-        resources: {
-          links: [],
-          images: [],
-          stylesheets: [],
-          scripts: [],
-          iframes: [],
-          other: [],
-        },
-        requestHeaders: [],
-        responseHeaders: [],
-        networkRequests: [],
-        navigationTiming: null,
-        dnsOverride: null,
-        ignoreCertErrors: false,
-        harFormat: null,
-        har: null,
-        harZipBase64: null,
-        harError: null,
-        timingMs: 0,
-        error: message,
-      } satisfies CheckResponse,
-      { status: isClientError ? 400 : 500 },
-    );
+    return NextResponse.json(emptyErrorPayload(message), {
+      status: isClientError ? 400 : 500,
+    });
   }
 }

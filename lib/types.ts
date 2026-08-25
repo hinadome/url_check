@@ -28,12 +28,25 @@ export type CheckRequest = {
   captureHar?: boolean;
   /** HAR packaging when `captureHar` is true. Default `zip`. */
   harFormat?: HarFormat;
+  /** Chromium `--disable-http2` for this check. Default false. */
+  disableHttp2?: boolean;
+  /**
+   * Disable HTTP/3 for this check. Mapped to Chromium `--disable-quic`
+   * (there is no `--disable-http3`). Default false.
+   */
+  disableHttp3?: boolean;
+  /**
+   * Preset: force both disables (≈ HTTP/1.1 only). Default false.
+   * Server expands to disableHttp2 + disableHttp3.
+   */
+  http11Only?: boolean;
 };
 
 /** Server feature gates from env (GET /api/config). Default allow when unset. */
 export type FeatureFlags = {
   allowIgnoreCertErrors: boolean;
   allowCaptureHar: boolean;
+  allowHttpProtocolControls: boolean;
 };
 
 export type ResourceSummaryData = {
@@ -123,6 +136,14 @@ export type CheckResponse = {
   dnsOverride: DnsOverride | null;
   /** Whether this check ignored TLS certificate errors */
   ignoreCertErrors: boolean;
+  /** Chromium `--disable-http2` was applied for this check */
+  disableHttp2: boolean;
+  /** HTTP/3 disabled via Chromium `--disable-quic` for this check */
+  disableHttp3: boolean;
+  /** Both protocol disables applied (HTTP/1.1-only intent) */
+  http11Only: boolean;
+  /** Chromium launch args added for protocol restrictions (empty if none) */
+  chromiumProtocolArgs: string[];
   /** HAR packaging used for this check, or null when HAR was not requested */
   harFormat: HarFormat | null;
   /**

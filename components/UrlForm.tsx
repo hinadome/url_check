@@ -16,6 +16,9 @@ export type UrlFormSubmit = {
   ignoreCertErrors: boolean;
   captureHar: boolean;
   harFormat: HarFormat;
+  disableHttp2: boolean;
+  disableHttp3: boolean;
+  http11Only: boolean;
 };
 
 type UrlFormProps = {
@@ -26,6 +29,7 @@ type UrlFormProps = {
 const DEFAULT_FLAGS: FeatureFlags = {
   allowIgnoreCertErrors: true,
   allowCaptureHar: true,
+  allowHttpProtocolControls: true,
 };
 
 export function UrlForm({ onSubmit, loading }: UrlFormProps) {
@@ -36,6 +40,9 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
   const [ignoreCertErrors, setIgnoreCertErrors] = useState(false);
   const [captureHar, setCaptureHar] = useState(false);
   const [harFormat, setHarFormat] = useState<HarFormat>("zip");
+  const [disableHttp2, setDisableHttp2] = useState(false);
+  const [disableHttp3, setDisableHttp3] = useState(false);
+  const [http11Only, setHttp11Only] = useState(false);
   const [flags, setFlags] = useState<FeatureFlags>(DEFAULT_FLAGS);
 
   useEffect(() => {
@@ -49,6 +56,7 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
         setFlags({
           allowIgnoreCertErrors: data.allowIgnoreCertErrors !== false,
           allowCaptureHar: data.allowCaptureHar !== false,
+          allowHttpProtocolControls: data.allowHttpProtocolControls !== false,
         });
       } catch {
         // Keep default-allow if config endpoint is unreachable
@@ -64,7 +72,35 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
     if (!flags.allowCaptureHar) {
       setCaptureHar(false);
     }
+    if (!flags.allowHttpProtocolControls) {
+      setDisableHttp2(false);
+      setDisableHttp3(false);
+      setHttp11Only(false);
+    }
   }, [flags]);
+
+  const handleHttp11Only = (checked: boolean) => {
+    setHttp11Only(checked);
+    if (checked) {
+      setDisableHttp2(true);
+      setDisableHttp3(true);
+    } else {
+      setDisableHttp2(false);
+      setDisableHttp3(false);
+    }
+  };
+
+  const handleDisableHttp2 = (checked: boolean) => {
+    setDisableHttp2(checked);
+    if (!checked) setHttp11Only(false);
+    else if (disableHttp3) setHttp11Only(true);
+  };
+
+  const handleDisableHttp3 = (checked: boolean) => {
+    setDisableHttp3(checked);
+    if (!checked) setHttp11Only(false);
+    else if (disableHttp2) setHttp11Only(true);
+  };
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -88,6 +124,7 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
         : undefined;
 
     const wantHar = flags.allowCaptureHar && captureHar;
+    const wantProtocol = flags.allowHttpProtocolControls;
     onSubmit({
       url: trimmed,
       headers: headers.filter((h) => h.name.trim()),
@@ -95,6 +132,9 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
       ignoreCertErrors: flags.allowIgnoreCertErrors && ignoreCertErrors,
       captureHar: wantHar,
       harFormat: wantHar ? harFormat : "zip",
+      disableHttp2: wantProtocol && disableHttp2,
+      disableHttp3: wantProtocol && disableHttp3,
+      http11Only: wantProtocol && http11Only,
     });
   };
 
@@ -143,6 +183,59 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
           </label>
         </div>
       </fieldset>
+
+      {flags.allowHttpProtocolControls && (
+        <fieldset className="http-protocol" disabled={loading}>
+          <legend>HTTP protocol (optional)</legend>
+          <p className="muted">
+            Restricts Chromium launch flags; negotiated version still shown in
+            Network → HTTP. HTTP/3 is disabled via{" "}
+            <code>--disable-quic</code>.
+          </p>
+          <label className="field-checkbox">
+            <input
+              type="checkbox"
+              checked={http11Only}
+              onChange={(e) => handleHttp11Only(e.target.checked)}
+            />
+            <span>
+              HTTP/1.1 only
+              <span className="muted field-checkbox-hint">
+                {" "}
+                — preset: disable HTTP/2 and HTTP/3
+              </span>
+            </span>
+          </label>
+          <label className="field-checkbox">
+            <input
+              type="checkbox"
+              checked={disableHttp2}
+              onChange={(e) => handleDisableHttp2(e.target.checked)}
+            />
+            <span>
+              Disable HTTP/2
+              <span className="muted field-checkbox-hint">
+                {" "}
+                — Chromium <code>--disable-http2</code>
+              </span>
+            </span>
+          </label>
+          <label className="field-checkbox">
+            <input
+              type="checkbox"
+              checked={disableHttp3}
+              onChange={(e) => handleDisableHttp3(e.target.checked)}
+            />
+            <span>
+              Disable HTTP/3 (QUIC)
+              <span className="muted field-checkbox-hint">
+                {" "}
+                — Chromium <code>--disable-quic</code>
+              </span>
+            </span>
+          </label>
+        </fieldset>
+      )}
 
       <HeaderEditor headers={headers} onChange={setHeaders} disabled={loading} />
 

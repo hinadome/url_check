@@ -29,5 +29,8 @@ export function getFeatureFlags(): FeatureFlags {
   return {
     allowIgnoreCertErrors: envFlagAllowByDefault("ALLOW_IGNORE_CERT_ERRORS"),
     allowCaptureHar: envFlagAllowByDefault("ALLOW_CAPTURE_HAR"),
+    allowHttpProtocolControls: envFlagAllowByDefault(
+      "ALLOW_HTTP_PROTOCOL_CONTROLS",
+    ),
   };
 }

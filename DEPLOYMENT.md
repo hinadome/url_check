@@ -60,7 +60,7 @@ After `git pull` (or your usual sync), re-run the same script on the VM:
 
 That path is idempotent for updates: stops `url-checker` if running, runs `npm ci` + Playwright Chromium install + `npm run build`, rewrites/restarts the systemd unit, and leaves other nginx sites alone (skips rewriting this app’s site when unchanged; preserves HTTPS site files from `setup-https.sh`).
 
-**Capture HAR / TLS ignore / replay:** no extra deploy flags. HAR dual format (`harFormat` zip/json), `MAX_HAR_BYTES`, and feature gates ship with the app after rebuild. Set `ALLOW_*` in `.env` or systemd/Compose and restart. Offline replay is optional client-side — [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) / [`scripts/replay-har.mjs`](scripts/replay-har.mjs) — not started by the deploy scripts.
+**Capture HAR / TLS ignore / HTTP protocol / replay:** no extra deploy script flags. After rebuild, runtime options ship with the app: HAR dual format (`harFormat` zip/json), `MAX_HAR_BYTES`, HTTP protocol Chromium args (`--disable-http2` / `--disable-quic`), and feature gates (`ALLOW_IGNORE_CERT_ERRORS`, `ALLOW_CAPTURE_HAR`, `ALLOW_HTTP_PROTOCOL_CONTROLS`). Set `ALLOW_*` in `.env` or systemd/Compose and **restart**. Offline HAR replay is optional client-side — [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) / [`scripts/replay-har.mjs`](scripts/replay-har.mjs) — not started by the deploy scripts.
 
 ### Requirements
 
@@ -190,18 +190,20 @@ These are **runtime UI/API options**, not extra deploy script flags. After you r
 |----------|---------|---------|
 | `ALLOW_IGNORE_CERT_ERRORS` | allow (unset) | When disabled (`0` / `false` / `no` / `off`), UI hides the checkbox and `POST /api/check` with `ignoreCertErrors: true` returns **400** |
 | `ALLOW_CAPTURE_HAR` | allow (unset) | Same for Capture HAR / `captureHar: true` |
+| `ALLOW_HTTP_PROTOCOL_CONTROLS` | allow (unset) | Same for **HTTP/1.1 only** / Disable HTTP/2 / Disable HTTP/3 (`http11Only`, `disableHttp2`, `disableHttp3`) |
 
 Enforced in [`lib/feature-flags.ts`](lib/feature-flags.ts) + `POST /api/check`. UI reads `GET /api/config`. Set on the **running** Node process (`.env`, systemd `Environment=`, Compose `environment:`), then **restart** the app. See [`.env.example`](.env.example).
 
 ```bash
-# Public/shared host — lock down both
-ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0
+# Public/shared host — lock down
+ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
 # then: sudo systemctl restart url-checker
 ```
 
 | Feature | Deploy / ops impact |
 |---------|---------------------|
 | **Ignore certificate errors** | No extra packages. Playwright `ignoreHTTPSErrors` for that check only. Per-check default **off**; server allow default **on**. |
+| **HTTP protocol controls** | No extra packages. Allowlisted Chromium launch args only: `--disable-http2` and/or `--disable-quic` (HTTP/3). UI order: HTTP/1.1 only → Disable HTTP/2 → Disable HTTP/3 (QUIC). Per-check default **off**; server allow default **on**. Does not change nginx. See [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md) and [README — HTTP protocol](README.md#http-protocol-controls). |
 | **Capture HAR** | Playwright `recordHar` (`mode: "full"`) writes an ephemeral archive under OS temp (`/tmp/url-checker-har-*`), returns it in the API response, then **deletes** the directory. UI radios / `harFormat` on `POST /api/check`: **`zip`** (default, attach → `harZipBase64` / `.har.zip`) or **`json`** (embed → `har` / `.har`). See format table below. |
 | HAR soft limit | `MAX_HAR_BYTES` = `25_000_000` in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Applies to the **archive file** (zip or embed `.har`). Over that, the **check still succeeds**; `har` / `harZipBase64` are omitted and the UI shows `harError`. Raise the constant and rebuild to change it. |
 | Large JSON | A successful check with HAR can be tens of MB (`harZipBase64` or large `har` string + screenshot + network bodies). nginx site templates stream the upstream (`proxy_buffering off`). If you raise `MAX_HAR_BYTES` a lot, also watch Node heap, `/tmp` space, and reverse-proxy idle timeouts. |
@@ -468,7 +470,7 @@ git checkout <ref>
 ## Security reminders
 
 - Do not expose an open checker to the public internet without auth and rate limits (SSRF risk even with current guards).
-- **Ignore certificate errors** and **Capture HAR** are off by default per check; HAR is never written into the app directory or a database (OS temp during the check only). Lock down with `ALLOW_IGNORE_CERT_ERRORS=0` / `ALLOW_CAPTURE_HAR=0` on shared hosts (see [Feature gates](#feature-gates-env--default-allow)).
+- **Ignore certificate errors**, **HTTP protocol controls**, and **Capture HAR** are off by default per check; HAR is never written into the app directory or a database (OS temp during the check only). Lock down with `ALLOW_IGNORE_CERT_ERRORS=0` / `ALLOW_CAPTURE_HAR=0` / `ALLOW_HTTP_PROTOCOL_CONTROLS=0` on shared hosts (see [Feature gates](#feature-gates-env--default-allow)).
 - VM deploy installs **nginx on port 80** by default and binds the app to localhost; enable TLS with [`scripts/setup-https.sh`](scripts/setup-https.sh) `<domain>` (or a cloud LB) before production use. Re-running deploy does not wipe other nginx sites.
 - Keep Playwright / base image versions updated with dependency upgrades.
 
@@ -476,7 +478,8 @@ git checkout <ref>
 
 ## Related docs
 
-- App overview and API: [README.md](README.md)
+- App overview and API: [README.md](README.md) (incl. [HTTP protocol controls](README.md#http-protocol-controls))
 - HAR replay (post-download): [REPLAY_SCRIPT.md](REPLAY_SCRIPT.md)
+- HTTP protocol design: [docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md)
 - HAR zip design notes: [docs/HAR_ZIP_IMPLEMENT_PLAN.md](docs/HAR_ZIP_IMPLEMENT_PLAN.md)
 - Change history: [CHANGELOG.md](CHANGELOG.md)

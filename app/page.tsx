@@ -99,6 +99,24 @@ export default function Home() {
                   TLS: <strong>certificate errors ignored</strong>
                 </span>
               )}
+              {(result.disableHttp2 || result.disableHttp3) && (
+                <span>
+                  HTTP:{" "}
+                  <strong>
+                    {result.http11Only
+                      ? "HTTP/1.1 only"
+                      : [
+                          result.disableHttp2 ? "no HTTP/2" : null,
+                          result.disableHttp3 ? "no HTTP/3 (QUIC)" : null,
+                        ]
+                          .filter(Boolean)
+                          .join(", ")}
+                  </strong>
+                  {result.chromiumProtocolArgs?.length
+                    ? ` (${result.chromiumProtocolArgs.join(" ")})`
+                    : ""}
+                </span>
+              )}
               {hasHarDownload(result) && (
                 <span>
                   HAR
