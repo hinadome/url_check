@@ -60,7 +60,14 @@ After `git pull` (or your usual sync), re-run the same script on the VM:
 
 That path is idempotent for updates: stops `url-checker` if running, runs `npm ci` + Playwright Chromium install + `npm run build`, rewrites/restarts the systemd unit, and leaves other nginx sites alone (skips rewriting this app’s site when unchanged; preserves HTTPS site files from `setup-https.sh`).
 
-**Capture HAR / TLS ignore / HTTP protocol / replay:** no extra deploy script flags. After rebuild, runtime options ship with the app: HAR dual format (`harFormat` zip/json), `MAX_HAR_BYTES`, HTTP protocol Chromium args (`--disable-http2` / `--disable-quic`), and feature gates (`ALLOW_IGNORE_CERT_ERRORS`, `ALLOW_CAPTURE_HAR`, `ALLOW_HTTP_PROTOCOL_CONTROLS`). Set `ALLOW_*` in `.env` or systemd/Compose and **restart**. Offline HAR replay is optional client-side — [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) / [`scripts/replay-har.mjs`](scripts/replay-har.mjs) — not started by the deploy scripts.
+**Capture HAR / TLS ignore / HTTP protocol / replay:** no extra deploy script flags. After `git pull` + rebuild, these ship with the app:
+
+- HAR dual format (`harFormat` zip/json), `MAX_HAR_BYTES`
+- Capture HAR no longer hangs on heavy sites (Costco-class): network collector skips per-response bodies when HAR is on; body/flush timeouts — see [README — Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco)
+- Headless `ERR_HTTP2_PROTOCOL_ERROR` mitigation (headed UA / `sec-ch-ua`; optional `--disable-http2` retry) — see [README — Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco)
+- HTTP protocol Chromium args (`--disable-http2` / `--disable-quic`) and feature gates (`ALLOW_IGNORE_CERT_ERRORS`, `ALLOW_CAPTURE_HAR`, `ALLOW_HTTP_PROTOCOL_CONTROLS`)
+
+Set `ALLOW_*` in `.env` or systemd/Compose and **restart**. Offline HAR replay is optional client-side — [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) / [`scripts/replay-har.mjs`](scripts/replay-har.mjs) — not started by the deploy scripts.
 
 ### Requirements
 
@@ -180,7 +187,7 @@ curl -sI "http://127.0.0.1:${NGINX_PORT:-80}/"
 
 **HTTPS:** after HTTP deploy, run [`scripts/setup-https.sh`](scripts/setup-https.sh) with your domain (Let's Encrypt + nginx 443). Or terminate TLS on a cloud load balancer and set `APP_URL=https://your.domain`.
 
-### App features that affect the host (HAR, TLS ignore)
+### App features that affect the host (HAR, TLS ignore, HTTP protocol)
 
 These are **runtime UI/API options**, not extra deploy script flags. After you re-run `deploy-vm.sh` (or rebuild the container), they are available with no further script changes.
 
@@ -204,9 +211,11 @@ ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
 |---------|---------------------|
 | **Ignore certificate errors** | No extra packages. Playwright `ignoreHTTPSErrors` for that check only. Per-check default **off**; server allow default **on**. |
 | **HTTP protocol controls** | No extra packages. Allowlisted Chromium launch args only: `--disable-http2` and/or `--disable-quic` (HTTP/3). UI order: HTTP/1.1 only → Disable HTTP/2 → Disable HTTP/3 (QUIC). Per-check default **off**; server allow default **on**. Does not change nginx. See [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md) and [README — HTTP protocol](README.md#http-protocol-controls). |
+| **Headless / Costco-class sites** | No deploy flags. App sets headed Chrome UA / `sec-ch-ua` by default and may auto-retry with `--disable-http2` after `ERR_HTTP2_PROTOCOL_ERROR`. See [README](README.md#headless--err_http2_protocol_error-e-g-costco). |
 | **Capture HAR** | Playwright `recordHar` (`mode: "full"`) writes an ephemeral archive under OS temp (`/tmp/url-checker-har-*`), returns it in the API response, then **deletes** the directory. UI radios / `harFormat` on `POST /api/check`: **`zip`** (default, attach → `harZipBase64` / `.har.zip`) or **`json`** (embed → `har` / `.har`). See format table below. |
+| HAR + heavy sites (ops) | When Capture HAR is on, the app **does not** call `response.body()` for the Network Content tab (bodies are in the HAR). Body reads elsewhere are capped (5s each; flush ≤15s) so Costco/Akamai long-lived streams cannot stall the check. Keep `PROXY_READ_TIMEOUT` ≥ ~120s. Details: [README — Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco). |
 | HAR soft limit | `MAX_HAR_BYTES` = `25_000_000` in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Applies to the **archive file** (zip or embed `.har`). Over that, the **check still succeeds**; `har` / `harZipBase64` are omitted and the UI shows `harError`. Raise the constant and rebuild to change it. |
-| Large JSON | A successful check with HAR can be tens of MB (`harZipBase64` or large `har` string + screenshot + network bodies). nginx site templates stream the upstream (`proxy_buffering off`). If you raise `MAX_HAR_BYTES` a lot, also watch Node heap, `/tmp` space, and reverse-proxy idle timeouts. |
+| Large JSON | A successful check with HAR can still be tens of MB (`harZipBase64` or large `har` + screenshot). Network Content bodies are omitted when HAR is on (smaller than duplicating every body in JSON). nginx streams upstream (`proxy_buffering off`). Watch Node heap, `/tmp`, and proxy timeouts if you raise `MAX_HAR_BYTES`. |
 | **Replay (offline)** | Not a server feature. After download, replay exports with [`scripts/replay-har.mjs`](scripts/replay-har.mjs) (URL Checker zip/json, DevTools `.har`, `harZipBase64`). Guide: [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md). Requires Node + Chromium on the machine running the script. |
 
 **Capture HAR formats**
@@ -216,7 +225,7 @@ ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
 | **`zip`** (default) | `content: "attach"` → `session.har.zip` | `harZipBase64` | `.har.zip` | Raw files inside the zip |
 | **`json`** | `content: "embed"` → `session.har` | `har` | `.har` | Base64-inlined in HAR JSON |
 
-Details: [README — HAR capture](README.md#har-capture-playwright-session-archive).
+Details: [README — HAR capture](README.md#har-capture-playwright-session-archive) · [Capture HAR hang (Costco)](README.md#capture-har-hang-on-heavy-sites-e-g-costco) · [Headless HTTP/2 error](README.md#headless--err_http2_protocol_error-e-g-costco).
 
 Skip nginx entirely:
 
@@ -290,6 +299,8 @@ curl -sI "http://127.0.0.1:${PORT:-3000}/"
 | App reachable on :3000 but not :80 | Check `systemctl status nginx`; firewall/security group must allow **80** (and **443** after certbot) |
 | `setup-https` “Certificate not found after certbot” | Often a **false negative**: `/etc/letsencrypt/live` is root-only, so a non-root `test -f` fails. Current script checks with `sudo`. Re-pull and re-run. Also verify: `sudo ls -la /etc/letsencrypt/live/`, `sudo certbot certificates`, DNS A record, port 80 from the internet, and ACME path `http://<domain>/.well-known/acme-challenge/` |
 | Check works but **HAR download unavailable** | Expected when the archive exceeds `MAX_HAR_BYTES` (~25 MB) — page results still render. Confirm `/tmp` is writable and has free space (`df -h /tmp`). Raise the constant in `lib/playwright-fetch.ts` and re-run `./scripts/deploy-vm.sh` if you need larger HARs. |
+| Capture HAR on Costco (etc.) **never finishes** / spins forever | Fixed in current app: hung `response.body()` flush, not HAR zip write. **Re-pull and re-run `./scripts/deploy-vm.sh`** (or rebuild the container). After update, Network Content is empty when HAR is on; bodies are in the HAR download. See [README — Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco). If still slow, raise nginx `PROXY_READ_TIMEOUT` / check OOM. |
+| `page.goto: net::ERR_HTTP2_PROTOCOL_ERROR` (e.g. Costco) | Fixed in current app via headed UA/`sec-ch-ua` + optional `--disable-http2` retry. Re-deploy latest build. See [README — Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco). |
 | Check **OOM** / nginx 502 when Capture HAR is on | Peak RAM is Chromium + Node JSON (screenshot + optional `harZipBase64` or large `har` string). Add RAM/swap; do not capture HAR on huge sites; optionally set `NODE_OPTIONS=--max-old-space-size=…` on the **running** systemd unit (the deploy script’s heap cap applies to **build** only). |
 | Leftover `/tmp/url-checker-har-*` | Abnormal (crash before cleanup). Safe to `rm -rf` those dirs; the app does not persist HAR. |
 
@@ -311,6 +322,7 @@ Supporting Compose settings:
 - Healthcheck against `/`
 - `restart: unless-stopped`
 - Optional `NODE_OPTIONS` in Compose (commented) if Capture HAR + large pages OOM the Node process
+- After rebuild: Capture HAR hang fix + headless HTTP/2 mitigation are in the image (no Compose env required beyond optional feature gates)
 
 ### Requirements
 
@@ -478,7 +490,7 @@ git checkout <ref>
 
 ## Related docs
 
-- App overview and API: [README.md](README.md) (incl. [HTTP protocol controls](README.md#http-protocol-controls))
+- App overview and API: [README.md](README.md) (incl. [HTTP protocol controls](README.md#http-protocol-controls), [Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco), [Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco))
 - HAR replay (post-download): [REPLAY_SCRIPT.md](REPLAY_SCRIPT.md)
 - HTTP protocol design: [docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md)
 - HAR zip design notes: [docs/HAR_ZIP_IMPLEMENT_PLAN.md](docs/HAR_ZIP_IMPLEMENT_PLAN.md)

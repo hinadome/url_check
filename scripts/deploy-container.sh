@@ -5,8 +5,12 @@
 # and DEPLOYMENT.md:
 #   ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR / ALLOW_HTTP_PROTOCOL_CONTROLS
 #   NODE_OPTIONS (optional heap for large HAR + screenshot JSON)
-# HTTP protocol controls (Chromium --disable-http2 / --disable-quic) ship with the
-# app after rebuild; no Compose service changes required. Optional HAR replay:
+#
+# After image rebuild, the app includes:
+#   - Capture HAR hang fix (skip network bodies when HAR on; body/flush timeouts)
+#   - Headless ERR_HTTP2_PROTOCOL_ERROR mitigation (headed UA / sec-ch-ua)
+#   - HTTP protocol controls (--disable-http2 / --disable-quic)
+# No Compose service changes required for those features. Optional HAR replay:
 # scripts/replay-har.mjs (REPLAY_SCRIPT.md).
 #
 # Usage:

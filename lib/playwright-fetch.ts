@@ -19,12 +19,20 @@ const MAX_HTML_CHARS = 2_000_000;
  * Soft cap for HAR archive size in bytes (zip on disk, or embed `.har` file size).
  * Over this limit the check still succeeds; HAR is omitted and `harError` is set.
  */
-const MAX_HAR_BYTES = 25_000_000;
+const MAX_HAR_BYTES = 350_000_000;
 
 function toHeaderPairs(headers: Record<string, string>): HeaderPair[] {
   return Object.entries(headers)
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function findHeaderKey(
+  headers: Record<string, string>,
+  name: string,
+): string | undefined {
+  const lower = name.toLowerCase();
+  return Object.keys(headers).find((k) => k.toLowerCase() === lower);
 }
 
 function hostResolverArgs(dnsOverride: DnsOverride | null): string[] {
@@ -72,6 +80,54 @@ export function resolveHttpProtocolOptions(input: {
   };
 }
 
+/**
+ * Headless Chromium sends `HeadlessChrome` in UA / `sec-ch-ua`. Some CDNs/WAFs
+ * (e.g. Akamai on costco.com) abort with net::ERR_HTTP2_PROTOCOL_ERROR.
+ * Prefer a headed Chrome identity unless the caller already set these headers.
+ */
+export function buildHeadlessCompatibleIdentity(
+  headers: Record<string, string>,
+  chromiumVersion: string,
+): { userAgent?: string; extraHTTPHeaders: Record<string, string> } {
+  const major = chromiumVersion.split(".")[0] || "120";
+  const extraHTTPHeaders = { ...headers };
+
+  let userAgent: string | undefined;
+  if (!findHeaderKey(extraHTTPHeaders, "user-agent")) {
+    if (process.platform === "darwin") {
+      userAgent = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromiumVersion} Safari/537.36`;
+    } else if (process.platform === "win32") {
+      userAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromiumVersion} Safari/537.36`;
+    } else {
+      userAgent = `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromiumVersion} Safari/537.36`;
+    }
+  }
+
+  if (!findHeaderKey(extraHTTPHeaders, "sec-ch-ua")) {
+    extraHTTPHeaders["sec-ch-ua"] =
+      `"Chromium";v="${major}", "Not.A/Brand";v="99", "Google Chrome";v="${major}"`;
+  }
+  if (!findHeaderKey(extraHTTPHeaders, "sec-ch-ua-mobile")) {
+    extraHTTPHeaders["sec-ch-ua-mobile"] = "?0";
+  }
+  if (!findHeaderKey(extraHTTPHeaders, "sec-ch-ua-platform")) {
+    const platform =
+      process.platform === "darwin"
+        ? "macOS"
+        : process.platform === "win32"
+          ? "Windows"
+          : "Linux";
+    extraHTTPHeaders["sec-ch-ua-platform"] = `"${platform}"`;
+  }
+
+  return { userAgent, extraHTTPHeaders };
+}
+
+function isHttp2ProtocolError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /ERR_HTTP2_PROTOCOL_ERROR/i.test(msg);
+}
+
 async function captureNavigationTiming(
   page: import("playwright").Page,
 ): Promise<NavigationTimingSnapshot | null> {
@@ -111,22 +167,51 @@ async function cleanupHarDir(harDir: string | null): Promise<void> {
   await rm(harDir, { recursive: true, force: true }).catch(() => undefined);
 }
 
-export async function fetchWithPlaywright(
-  url: string,
-  headers: Record<string, string>,
-  dnsOverride: DnsOverride | null = null,
-  ignoreCertErrors = false,
-  captureHar = false,
-  harFormat: HarFormat = "zip",
-  disableHttp2 = false,
-  disableHttp3 = false,
+/** Costco/Akamai and similar sites may keep navigating after `load`. */
+async function readPageContent(
+  page: import("playwright").Page,
+): Promise<string> {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      return await page.content();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/navigating and changing the content/i.test(msg) || attempt === 3) {
+        throw err;
+      }
+      await page
+        .waitForLoadState("load", { timeout: 10_000 })
+        .catch(() => undefined);
+      await page.waitForTimeout(300);
+    }
+  }
+  return await page.content();
+}
+
+type FetchAttemptOptions = {
+  url: string;
+  headers: Record<string, string>;
+  dnsOverride: DnsOverride | null;
+  ignoreCertErrors: boolean;
+  captureHar: boolean;
+  harFormat: HarFormat;
+  disableHttp2: boolean;
+  disableHttp3: boolean;
+  http2FallbackApplied: boolean;
+  started: number;
+};
+
+async function runFetchAttempt(
+  opts: FetchAttemptOptions,
 ): Promise<CheckResponse> {
-  const started = Date.now();
-  const protocol = resolveHttpProtocolOptions({ disableHttp2, disableHttp3 });
+  const protocol = resolveHttpProtocolOptions({
+    disableHttp2: opts.disableHttp2,
+    disableHttp3: opts.disableHttp3,
+  });
   const browser = await chromium.launch({
     headless: true,
     args: [
-      ...hostResolverArgs(dnsOverride),
+      ...hostResolverArgs(opts.dnsOverride),
       ...protocol.chromiumProtocolArgs,
     ],
   });
@@ -134,30 +219,35 @@ export async function fetchWithPlaywright(
   let context: BrowserContext | null = null;
   let harDir: string | null = null;
   let harPath: string | null = null;
-  const effectiveHarFormat: HarFormat | null = captureHar ? harFormat : null;
+  const effectiveHarFormat: HarFormat | null = opts.captureHar
+    ? opts.harFormat
+    : null;
 
   try {
-    if (captureHar) {
-      // Ephemeral OS temp only — never under the app tree; deleted after read.
+    if (opts.captureHar) {
       harDir = await mkdtemp(join(tmpdir(), "url-checker-har-"));
-      if (harFormat === "zip") {
-        // attach → binaries as zip entries (not base64 in HAR JSON)
+      if (opts.harFormat === "zip") {
         harPath = join(harDir, "session.har.zip");
       } else {
-        // embed → single .har; binaries base64-encoded inside JSON
         harPath = join(harDir, "session.har");
       }
     }
 
+    const identity = buildHeadlessCompatibleIdentity(
+      opts.headers,
+      browser.version(),
+    );
+
     context = await browser.newContext({
-      extraHTTPHeaders: headers,
-      ignoreHTTPSErrors: ignoreCertErrors,
+      ...(identity.userAgent ? { userAgent: identity.userAgent } : {}),
+      extraHTTPHeaders: identity.extraHTTPHeaders,
+      ignoreHTTPSErrors: opts.ignoreCertErrors,
       ...(harPath
         ? {
             recordHar: {
               path: harPath,
               mode: "full" as const,
-              content: (harFormat === "zip" ? "attach" : "embed") as
+              content: (opts.harFormat === "zip" ? "attach" : "embed") as
                 | "attach"
                 | "embed",
             },
@@ -165,7 +255,11 @@ export async function fetchWithPlaywright(
         : {}),
     });
     const page = await context.newPage();
-    const network = attachNetworkCollector(page);
+    // When HAR is on, bodies are in the archive — skip per-response body() so
+    // flush cannot hang on Costco/Akamai long-lived streams (ERR hang / never finish).
+    const network = attachNetworkCollector(page, {
+      captureBodies: !opts.captureHar,
+    });
 
     let status = 0;
     page.on("response", (response) => {
@@ -174,23 +268,32 @@ export async function fetchWithPlaywright(
       }
     });
 
-    // Prefer "load" over "networkidle": docs/SPAs often keep analytics/websocket
-    // traffic open forever, which makes networkidle hang until timeout.
-    const response = await page.goto(url, {
-      waitUntil: "load",
-      timeout: NAVIGATION_TIMEOUT_MS,
-    });
+    let response;
+    try {
+      // Prefer "load" over "networkidle": docs/SPAs often keep analytics/websocket
+      // traffic open forever, which makes networkidle hang until timeout.
+      response = await page.goto(opts.url, {
+        waitUntil: "load",
+        timeout: NAVIGATION_TIMEOUT_MS,
+      });
+    } catch (err) {
+      // Some CDNs still fail over HTTP/2 even with headed client hints — retry once
+      // with --disable-http2 when the caller did not already request it.
+      if (!opts.disableHttp2 && isHttp2ProtocolError(err)) {
+        throw Object.assign(new Error("HTTP2_FALLBACK_RETRY"), { cause: err });
+      }
+      throw err;
+    }
 
     if (response) {
       status = response.status();
     }
 
-    // Best-effort settle for late JS/DOM updates; ignore timeout.
     await page
       .waitForLoadState("networkidle", { timeout: NETWORK_IDLE_BUDGET_MS })
       .catch(() => undefined);
 
-    let requestHeaders: HeaderPair[] = toHeaderPairs(headers);
+    let requestHeaders: HeaderPair[] = toHeaderPairs(identity.extraHTTPHeaders);
     let responseHeaders: HeaderPair[] = [];
 
     if (response) {
@@ -203,8 +306,8 @@ export async function fetchWithPlaywright(
     }
 
     const finalUrl = page.url();
-    const title = await page.title();
-    let html = await page.content();
+    const title = await page.title().catch(() => "");
+    let html = await readPageContent(page);
     if (html.length > MAX_HTML_CHARS) {
       html = html.slice(0, MAX_HTML_CHARS);
     }
@@ -219,7 +322,6 @@ export async function fetchWithPlaywright(
     const resources = await extractResources(page);
     await network.flush();
 
-    // context.close() flushes Playwright's HAR recorder to harPath.
     await context.close();
     context = null;
 
@@ -273,17 +375,18 @@ export async function fetchWithPlaywright(
       responseHeaders,
       networkRequests: network.entries,
       navigationTiming,
-      dnsOverride,
-      ignoreCertErrors,
+      dnsOverride: opts.dnsOverride,
+      ignoreCertErrors: opts.ignoreCertErrors,
       disableHttp2: protocol.disableHttp2,
       disableHttp3: protocol.disableHttp3,
       http11Only: protocol.http11Only,
       chromiumProtocolArgs: protocol.chromiumProtocolArgs,
+      http2FallbackApplied: opts.http2FallbackApplied,
       harFormat: effectiveHarFormat,
       har,
       harZipBase64,
       harError,
-      timingMs: Date.now() - started,
+      timingMs: Date.now() - opts.started,
     };
   } finally {
     if (context) {
@@ -291,5 +394,49 @@ export async function fetchWithPlaywright(
     }
     await cleanupHarDir(harDir);
     await browser.close();
+  }
+}
+
+export async function fetchWithPlaywright(
+  url: string,
+  headers: Record<string, string>,
+  dnsOverride: DnsOverride | null = null,
+  ignoreCertErrors = false,
+  captureHar = false,
+  harFormat: HarFormat = "zip",
+  disableHttp2 = false,
+  disableHttp3 = false,
+): Promise<CheckResponse> {
+  const started = Date.now();
+  const base = {
+    url,
+    headers,
+    dnsOverride,
+    ignoreCertErrors,
+    captureHar,
+    harFormat,
+    disableHttp3,
+    started,
+  };
+
+  try {
+    return await runFetchAttempt({
+      ...base,
+      disableHttp2,
+      http2FallbackApplied: false,
+    });
+  } catch (err) {
+    if (
+      !disableHttp2 &&
+      err instanceof Error &&
+      err.message === "HTTP2_FALLBACK_RETRY"
+    ) {
+      return await runFetchAttempt({
+        ...base,
+        disableHttp2: true,
+        http2FallbackApplied: true,
+      });
+    }
+    throw err;
   }
 }

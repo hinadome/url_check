@@ -52,6 +52,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **HTTP protocol controls** (below Force DNS): **HTTP/1.1 only** preset, **Disable HTTP/2** (`--disable-http2`), **Disable HTTP/3 (QUIC)** (`--disable-quic`). Playwright has no `httpVersion` request param — Chromium launch args only. Result echoes `disableHttp2` / `disableHttp3` / `http11Only` / `chromiumProtocolArgs`. Plan: [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md)
 - **HAR replay script** [`scripts/replay-har.mjs`](scripts/replay-har.mjs): replay URL Checker or DevTools HAR exports offline via Playwright `routeFromHAR`; supports `.har.zip`, embed `.har`, `harZipBase64`, check JSON; progressive screenshots. Guide: [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md)
 
+### Fixed
+
+- **Capture HAR on heavy sites (e.g. Costco) appeared to never finish**
+  - **Cause:** Network collector called `response.body()` for every response and `flush()` awaited all of them. Costco/Akamai keeps many long-lived/streaming requests open, so some `body()` calls hang indefinitely — worse when HAR recording is also on (hundreds of resources). The UI waited forever after navigation looked “done.”
+  - **Fix:** (1) **5s timeout** per `response.body()` and **15s cap** on collector `flush()`; (2) when **Capture HAR** is on, skip network-panel body capture (`captureBodies: false`) — bodies live in the HAR archive; (3) stop accepting new collector tasks once flush starts. Files: [`lib/network-collector.ts`](lib/network-collector.ts), [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts).
+
+- **`page.goto: net::ERR_HTTP2_PROTOCOL_ERROR` on sites like Costco** (e.g. `https://www.costco.com/`)
+
+  **Error**
+  ```text
+  page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://www.costco.com/
+  Call log:
+    - navigating to "https://www.costco.com/", waiting until "load"
+  ```
+
+  **Cause**
+  - Playwright launches **headless** Chromium, which advertises `HeadlessChrome` in `navigator.userAgent` and in the `sec-ch-ua` client hint.
+  - Some CDN/WAF stacks (notably **Akamai**, used by Costco and similar retailers) reject or abort that fingerprint during HTTP/2 negotiation, which Chromium surfaces as `ERR_HTTP2_PROTOCOL_ERROR` rather than a normal HTTP status.
+  - Passing only Chromium `--disable-http2` did **not** reliably load Costco in testing (often hung/timeout); the working fix was removing headless branding from UA / `sec-ch-ua`.
+
+  **Fix (implementation in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts))**
+  1. **`buildHeadlessCompatibleIdentity()`** — before `browser.newContext()`, set a headed Chrome `userAgent` and default `sec-ch-ua` / `sec-ch-ua-mobile` / `sec-ch-ua-platform` **unless** the check already supplies those headers (custom headers win).
+  2. **HTTP/2 fallback retry** — if `page.goto` still throws `ERR_HTTP2_PROTOCOL_ERROR` and the user did not already request Disable HTTP/2, close the browser and **retry once** with `--disable-http2`; response sets `http2FallbackApplied: true` and echoes updated `chromiumProtocolArgs` / meta (“auto after HTTP/2 error”).
+  3. **`readPageContent()`** — retry `page.content()` when the document is still navigating after `load` (Costco and similar keep redirecting briefly), so capture does not fail with “Unable to retrieve content because the page is navigating…”.
+  4. Types/API/UI: `http2FallbackApplied` on `CheckResponse`; documented under README [HTTP protocol controls](README.md#http-protocol-controls) / Headless `ERR_HTTP2_PROTOCOL_ERROR`.
+
 ### Changed
 
 - Form layout: **Force DNS** → **HTTP protocol** (HTTP/1.1 only → Disable HTTP/2 → Disable HTTP/3) → Custom headers → **Ignore certificate errors** / **Capture HAR**; Capture HAR includes **Zip / JSON** format radios (`harFormat`, default zip).
@@ -69,10 +95,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- `README.md` — [HTTP protocol controls](README.md#http-protocol-controls) (UI order, Chromium args, independence matrix, API echo fields); [Export](README.md#export) / [HAR capture](README.md#har-capture-playwright-session-archive) (dual `harFormat` zip/json, `MAX_HAR_BYTES`, `har` / `harZipBase64`); plan [`docs/HAR_ZIP_IMPLEMENT_PLAN.md`](docs/HAR_ZIP_IMPLEMENT_PLAN.md)
-- [`DEPLOYMENT.md`](DEPLOYMENT.md) — feature gates incl. `ALLOW_HTTP_PROTOCOL_CONTROLS`; Capture HAR formats / `MAX_HAR_BYTES`; `NGINX_DISABLE_DEFAULT`; re-run notes; replay script pointer
+- `README.md` — [HTTP protocol controls](README.md#http-protocol-controls) (UI order, Chromium args, independence matrix, API echo fields, **Headless / `ERR_HTTP2_PROTOCOL_ERROR`**); [Capture HAR hang on heavy sites](README.md#capture-har-hang-on-heavy-sites-e-g-costco) (symptom, root cause, fix); [Export](README.md#export) / [HAR capture](README.md#har-capture-playwright-session-archive); plan [`docs/HAR_ZIP_IMPLEMENT_PLAN.md`](docs/HAR_ZIP_IMPLEMENT_PLAN.md)
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) — feature gates incl. `ALLOW_HTTP_PROTOCOL_CONTROLS`; Capture HAR formats / hang fix / `MAX_HAR_BYTES`; headless HTTP/2 ops notes; troubleshooting (Costco hang + `ERR_HTTP2_PROTOCOL_ERROR`); `NGINX_DISABLE_DEFAULT`; re-run notes; replay script pointer
 - [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md) — Chromium `--disable-http2` / `--disable-quic` design (implemented)
-- Deploy script headers: [`scripts/deploy-vm.sh`](scripts/deploy-vm.sh), [`scripts/deploy-container.sh`](scripts/deploy-container.sh) point at HTTP protocol + feature gates
+- Deploy script headers: [`scripts/deploy-vm.sh`](scripts/deploy-vm.sh), [`scripts/deploy-container.sh`](scripts/deploy-container.sh) point at HTTP protocol, Capture HAR hang fix, headless HTTP/2 mitigation, and feature gates
 - [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) — HAR replay CLI (`scripts/replay-har.mjs`), DevTools exports, offline verification, progressive screenshots
 - `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.
 

@@ -144,6 +144,11 @@ export type CheckResponse = {
   http11Only: boolean;
   /** Chromium launch args added for protocol restrictions (empty if none) */
   chromiumProtocolArgs: string[];
+  /**
+   * True when navigation failed with ERR_HTTP2_PROTOCOL_ERROR and the check
+   * was automatically retried with `--disable-http2`.
+   */
+  http2FallbackApplied: boolean;
   /** HAR packaging used for this check, or null when HAR was not requested */
   harFormat: HarFormat | null;
   /**

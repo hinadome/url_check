@@ -9,12 +9,34 @@ import type {
 const MAX_NETWORK_ENTRIES = 2_000;
 /** Cap captured body bytes per response to keep API payloads manageable */
 const MAX_BODY_BYTES = 512_000;
+/** `response.body()` can hang forever on streaming/analytics requests (e.g. Costco). */
+const BODY_READ_TIMEOUT_MS = 5_000;
+/** Cap how long flush waits for in-flight collectors before continuing. */
+const FLUSH_TIMEOUT_MS = 15_000;
 
 function hostFromUrl(url: string): string {
   try {
     return new URL(url).host;
   } catch {
     return "";
+  }
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  onTimeout: () => T,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(onTimeout()), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -77,14 +99,28 @@ async function captureBody(
   contentType: string,
   contentLengthHeader: string | undefined,
 ): Promise<CapturedBody> {
-  let buf: Buffer;
+  const fromHeader =
+    contentLengthHeader && /^\d+$/.test(contentLengthHeader)
+      ? Number(contentLengthHeader)
+      : null;
+
+  let buf: Buffer | null;
   try {
-    buf = await response.body();
+    buf = await withTimeout(
+      response.body(),
+      BODY_READ_TIMEOUT_MS,
+      () => null,
+    );
   } catch {
-    const fromHeader =
-      contentLengthHeader && /^\d+$/.test(contentLengthHeader)
-        ? Number(contentLengthHeader)
-        : null;
+    return {
+      bodyEncoding: "empty",
+      body: "",
+      bodyTruncated: false,
+      contentSize: fromHeader,
+    };
+  }
+
+  if (!buf) {
     return {
       bodyEncoding: "empty",
       body: "",
@@ -144,17 +180,31 @@ function toResourceTiming(raw: ReturnType<Request["timing"]>): ResourceTiming {
   };
 }
 
-export function attachNetworkCollector(page: Page): {
+export type NetworkCollectorOptions = {
+  /**
+   * When false, record metadata/headers only (no `response.body()`).
+   * Use with Capture HAR so bodies live in the HAR and flush cannot hang on
+   * long-lived Costco/Akamai streams. Default true.
+   */
+  captureBodies?: boolean;
+};
+
+export function attachNetworkCollector(
+  page: Page,
+  options: NetworkCollectorOptions = {},
+): {
   entries: NetworkRequestEntry[];
   flush: () => Promise<void>;
 } {
+  const captureBodies = options.captureBodies !== false;
   const entries: NetworkRequestEntry[] = [];
   const pending: Promise<void>[] = [];
   /** Map Playwright Request → entry for timing updates on requestfinished */
   const entryByRequest = new WeakMap<Request, NetworkRequestEntry>();
+  let accepting = true;
 
   page.on("response", (response) => {
-    if (entries.length + pending.length >= MAX_NETWORK_ENTRIES) {
+    if (!accepting || entries.length + pending.length >= MAX_NETWORK_ENTRIES) {
       return;
     }
 
@@ -172,11 +222,18 @@ export function attachNetworkCollector(page: Page): {
               response.httpVersion(),
             ]);
           const contentType = responseHeaderMap["content-type"] ?? "";
-          const captured = await captureBody(
-            response,
-            contentType,
-            responseHeaderMap["content-length"],
-          );
+          const contentLength = responseHeaderMap["content-length"];
+          const captured = captureBodies
+            ? await captureBody(response, contentType, contentLength)
+            : {
+                bodyEncoding: "empty" as const,
+                body: "",
+                bodyTruncated: false,
+                contentSize:
+                  contentLength && /^\d+$/.test(contentLength)
+                    ? Number(contentLength)
+                    : null,
+              };
 
           // Prefer timing after body read; responseEnd may still update on requestfinished
           let timing: ResourceTiming | null = null;
@@ -226,7 +283,8 @@ export function attachNetworkCollector(page: Page): {
   return {
     entries,
     flush: async () => {
-      await Promise.all(pending);
+      accepting = false;
+      await withTimeout(Promise.all(pending), FLUSH_TIMEOUT_MS, () => undefined);
       // Give late requestfinished handlers a tick to update responseEnd
       await new Promise<void>((resolve) => setImmediate(resolve));
       entries.sort((a, b) => {

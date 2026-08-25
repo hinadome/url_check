@@ -15,7 +15,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 5. [How content is stored](#how-content-is-stored) — backend vs browser; theme `localStorage`; ephemeral HAR temp
 6. [User interface](#user-interface) (includes [Resource summary vs Network requests](#resource-summary-vs-network-requests), [Plain text and non-HTML responses](#plain-text-and-non-html-responses))
 7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only), [Timing tab](#timing-tab-network-rows-only) / [Resource timing](#resource-timing) / [Navigation timing](#navigation-timing))
-8. [Export](#export) (includes [HAR capture](#har-capture-playwright-session-archive))
+8. [Export](#export) (includes [HAR capture](#har-capture-playwright-session-archive) / [Capture HAR hang on heavy sites](#capture-har-hang-on-heavy-sites-e-g-costco))
 9. [Deployment (Vercel / Netlify)](#deployment-vercel--netlify) — prefer VM/container ([re-runnable `deploy-vm.sh`](#vm-deploy-recommended-for-playwright)); details: [DEPLOYMENT.md](DEPLOYMENT.md)
 10. [API reference](#api-reference)
 11. [Project structure](#project-structure)
@@ -205,6 +205,15 @@ Negotiated version per resource still appears in Network → **HTTP** (`response
 
 Admins: `ALLOW_HTTP_PROTOCOL_CONTROLS=0` hides the UI and rejects API requests that enable these options (**400**). Default **allow** when unset. Plan: [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md).
 
+#### Headless / `ERR_HTTP2_PROTOCOL_ERROR` (e.g. Costco)
+
+Headless Chromium advertises `HeadlessChrome` in the user agent and `sec-ch-ua`. Some CDNs/WAFs (Akamai and similar) abort the connection with `net::ERR_HTTP2_PROTOCOL_ERROR`. URL Checker mitigates this by default:
+
+1. Sets a headed Chrome `userAgent` and `sec-ch-ua` / `sec-ch-ua-mobile` / `sec-ch-ua-platform` unless the request already includes those headers.
+2. If navigation still fails with `ERR_HTTP2_PROTOCOL_ERROR` and **Disable HTTP/2** was not requested, retries once with `--disable-http2` and returns `http2FallbackApplied: true` (meta strip shows “auto after HTTP/2 error”).
+
+This is not stealth/bot-bypass tooling; it only removes the explicit headless client-hint branding that triggers the protocol error on some hosts.
+
 ### Code map
 
 ```text
@@ -387,6 +396,8 @@ Captured in `lib/network-collector.ts` from each Playwright response body and sh
 | `text` | Body shown as plain text (`<pre>`, same style as Full content → Plain text) |
 | `base64` | Body shown as a base64 string; label notes “Binary content shown as base64” |
 | `empty` | Tab is available but the panel shows **nothing** (no placeholder message) |
+
+**When Capture HAR is on:** network rows use `bodyEncoding: "empty"` (no per-response `body()`). Use the downloaded HAR for response bodies. See [Capture HAR hang on heavy sites](#capture-har-hang-on-heavy-sites-e-g-costco).
 
 **Binary vs text (summary):**
 
@@ -614,6 +625,41 @@ When Capture HAR is on, choose a format:
 
 Hard process kills may leave orphaned `url-checker-har-*` dirs under OS temp; see [How content is stored](#how-content-is-stored).
 
+#### Capture HAR hang on heavy sites (e.g. Costco)
+
+**Symptom**
+
+With **Capture HAR** checked, a check against a busy site such as `https://www.costco.com/` could sit on “Fetching page with Playwright…” and **never finish**, even after the page had clearly loaded. Without Capture HAR, the same URL often completed.
+
+**What was wrong**
+
+HAR recording itself was not the main blocker. Playwright’s HAR flush (`context.close()` → zip on disk) for Costco typically finishes in well under a second once capture stops.
+
+The hang was in the **Network requests collector** (`lib/network-collector.ts`):
+
+1. On every `response` event, the collector called Playwright `response.body()` to fill the Network **Content** tab (up to ~512KB per response, max 2000 entries).
+2. At the end of the check, `network.flush()` ran `Promise.all(pending)` and waited for **every** in-flight body read.
+3. Costco (and similar Akamai-backed retail sites) keeps **hundreds** of requests alive—ads, analytics, beacons, long-lived streams. Some of those `response.body()` calls **never resolve**.
+4. With Capture HAR on, more resources are observed and body reads compete with HAR’s own body buffering, so the stall was much more likely. The UI waited forever on flush even though navigation, screenshot, and HAR write were already done (or nearly done).
+
+So the process looked stuck on “HAR”, but it was stuck on **network body flush**, not on writing `session.har.zip`.
+
+**How it was fixed**
+
+| Change | Detail | Where |
+|--------|--------|--------|
+| Skip bodies when HAR is on | `attachNetworkCollector(page, { captureBodies: false })` when `captureHar` is true. Network rows keep URL/status/headers/timing; Content tab is empty (`bodyEncoding: "empty"`). Response bodies remain in the downloaded HAR. | [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts) |
+| Per-body timeout | Each `response.body()` is raced with a **5s** timeout; on timeout the entry gets an empty body and collection continues. | [`lib/network-collector.ts`](lib/network-collector.ts) (`BODY_READ_TIMEOUT_MS`) |
+| Flush deadline | `flush()` stops accepting new response tasks, then waits at most **15s** for pending collectors before sorting and returning. | `FLUSH_TIMEOUT_MS` in `network-collector.ts` |
+
+**What you should expect now**
+
+- Costco + Capture HAR should complete in roughly the same order of magnitude as a normal check (often ~10s locally, still subject to the 60s API `maxDuration`).
+- Network **Content** tab is empty for that check; use **Export → HAR** (zip or JSON) for bodies.
+- Without Capture HAR, Content tab still captures bodies, but hung reads can no longer block the whole check beyond the timeouts above.
+
+Related: headless Costco can also fail earlier with `net::ERR_HTTP2_PROTOCOL_ERROR` — see [Headless / ERR_HTTP2_PROTOCOL_ERROR](#headless--err_http2_protocol_error-e-g-costco).
+
 Plan: [`docs/HAR_ZIP_IMPLEMENT_PLAN.md`](docs/HAR_ZIP_IMPLEMENT_PLAN.md).
 
 #### Soft limit (`MAX_HAR_BYTES`)
@@ -821,6 +867,7 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
   "disableHttp3": false,
   "http11Only": false,
   "chromiumProtocolArgs": [],
+  "http2FallbackApplied": false,
   "harFormat": null,
   "har": null,
   "harZipBase64": null,
@@ -844,6 +891,7 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
 | `ignoreCertErrors` | Whether this check used Playwright `ignoreHTTPSErrors` |
 | `disableHttp2` / `disableHttp3` / `http11Only` | Protocol restrictions applied for this check |
 | `chromiumProtocolArgs` | Chromium launch args added (e.g. `["--disable-http2","--disable-quic"]`), or `[]` |
+| `http2FallbackApplied` | `true` if navigation was retried with `--disable-http2` after `ERR_HTTP2_PROTOCOL_ERROR` |
 | `harFormat` | `"zip"` \| `"json"` when HAR was requested; otherwise `null` |
 | `har` | HAR 1.2 JSON text when `harFormat: "json"` and within limit; otherwise `null` |
 | `harZipBase64` | `.har.zip` as base64 when `harFormat: "zip"` and within limit; otherwise `null` |
@@ -970,8 +1018,10 @@ Defined mainly in `lib/playwright-fetch.ts` and related libs:
 | Network idle budget | 5s | Best-effort settle; timeout ignored |
 | Max HTML chars | 2,000,000 | Truncate oversized serialized HTML |
 | Max network entries | 2,000 | Cap collected responses |
-| Max network body bytes | 512,000 | Per-response body capture for Content tab (text or base64); truncated beyond this |
-| **`MAX_HAR_BYTES`** | **25,000,000** | Soft HAR **zip** size cap in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Over limit → `harZipBase64: null` + `harError`; **page results still succeed**. See [HAR capture](#har-capture-playwright-session-archive). |
+| Max network body bytes | 512,000 | Per-response body capture for Content tab (text or base64); truncated beyond this. **Skipped entirely when Capture HAR is on** (bodies live in the HAR) |
+| Network body read timeout | 5,000 ms | Per `response.body()`; prevents hang on streaming/analytics responses |
+| Network collector flush timeout | 15,000 ms | Max wait for in-flight collectors before continuing the check |
+| **`MAX_HAR_BYTES`** | **25,000,000** | Soft HAR archive size cap in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Over limit → `har` / `harZipBase64` null + `harError`; **page results still succeed**. See [HAR capture](#har-capture-playwright-session-archive). |
 | Content size | Prefer `Content-Length`; else response body length when available | Shown in network table |
 | DNS override | Chromium `--host-resolver-rules=MAP host ip` | Process-wide for that browser instance |
 | API `maxDuration` | 60s | Next.js route limit |
@@ -1014,6 +1064,7 @@ This is not a full multi-tenant hardening suite. Do not expose an open instance 
 - DNS override maps a single exact hostname (no multi-host or wildcard UI yet).
 - Third-party hosts are never remapped by the DNS override.
 - Export is client-side only (no server archive store); Network CSV is a metadata index (no header/body cells); HAR is optional via **Capture HAR** as `.har.zip` or `.har` subject to `MAX_HAR_BYTES` (see [HAR capture](#har-capture-playwright-session-archive)).
+- On Capture HAR checks, Network Content bodies are omitted by design so heavy sites cannot hang on `response.body()` flush (see [Capture HAR hang on heavy sites](#capture-har-hang-on-heavy-sites-e-g-costco)).
 - HTTP protocol controls only restrict Chromium negotiation via `--disable-http2` / `--disable-quic`; they cannot force HTTP/2 or HTTP/3, and Playwright has no per-request `httpVersion` API (see [HTTP protocol controls](#http-protocol-controls)).
 - No PDF export or editable HTML workspace.
 - Resource summary unique-URL totals are not expected to equal Network request row counts (different sources; see [Resource summary vs Network requests](#resource-summary-vs-network-requests)).

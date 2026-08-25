@@ -112,6 +112,7 @@ export default function Home() {
                           .filter(Boolean)
                           .join(", ")}
                   </strong>
+                  {result.http2FallbackApplied ? " (auto after HTTP/2 error)" : ""}
                   {result.chromiumProtocolArgs?.length
                     ? ` (${result.chromiumProtocolArgs.join(" ")})`
                     : ""}

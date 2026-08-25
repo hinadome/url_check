@@ -39,6 +39,7 @@ function emptyErrorPayload(message: string): CheckResponse {
     disableHttp3: false,
     http11Only: false,
     chromiumProtocolArgs: [],
+    http2FallbackApplied: false,
     harFormat: null,
     har: null,
     harZipBase64: null,
