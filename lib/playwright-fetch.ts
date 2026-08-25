@@ -19,7 +19,7 @@ const MAX_HTML_CHARS = 2_000_000;
  * Soft cap for HAR archive size in bytes (zip on disk, or embed `.har` file size).
  * Over this limit the check still succeeds; HAR is omitted and `harError` is set.
  */
-const MAX_HAR_BYTES = 350_000_000;
+const MAX_HAR_BYTES = 45_000_000;
 
 function toHeaderPairs(headers: Record<string, string>): HeaderPair[] {
   return Object.entries(headers)
@@ -403,7 +403,7 @@ export async function fetchWithPlaywright(
   dnsOverride: DnsOverride | null = null,
   ignoreCertErrors = false,
   captureHar = false,
-  harFormat: HarFormat = "zip",
+  harFormat: HarFormat = "json",
   disableHttp2 = false,
   disableHttp3 = false,
 ): Promise<CheckResponse> {

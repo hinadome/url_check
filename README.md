@@ -32,7 +32,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 
 URL Checker is a single-page tool plus one server API:
 
-1. The user submits a URL, optional custom HTTP headers, an optional DNS override (hostname → IP), and optionally **Ignore certificate errors** / **Capture HAR**.
+1. The user submits a URL, optional custom HTTP headers, an optional DNS override (hostname → IP), optional **HTTP protocol** controls, and optionally **Ignore certificate errors** / **Capture HAR** (with **JSON** or **Zip** format).
 2. The server validates input (including SSRF guards), then launches Playwright Chromium.
 3. If a DNS override is set, Chromium is started with `--host-resolver-rules=MAP <host> <ip>`.
 4. The browser navigates to the URL (`waitUntil: "load"`, plus a short best-effort `networkidle` wait). When ignore-cert is on, the context uses `ignoreHTTPSErrors: true`.
@@ -57,7 +57,7 @@ Typical uses:
 | Force DNS | Optional hostname → IP map via Chromium `--host-resolver-rules` |
 | Ignore cert errors | Optional checkbox (default **off**); Playwright `ignoreHTTPSErrors` for self-signed / expired TLS |
 | HTTP protocol | Optional (below Force DNS): **HTTP/1.1 only**, Disable HTTP/2, Disable HTTP/3 (QUIC) — Chromium launch args (see [HTTP protocol controls](#http-protocol-controls)) |
-| Capture HAR | Optional checkbox (default **off**); Playwright `recordHar` → downloadable HAR after the check (not stored on the server) |
+| Capture HAR | Optional (default **off**); format radios **JSON** (default, binaries as base64) → **Zip** (binaries as files); Playwright `recordHar` → downloadable `.har` / `.har.zip` (not stored on the server). Soft cap `MAX_HAR_BYTES` (~45 MB) |
 | Status / meta | Final URL, HTTP status, timing, DNS override, TLS ignore / HTTP protocol / HAR download (or HAR size warning) when used |
 | Theme | Light / dark mode toggle (persisted in `localStorage`; follows system preference on first visit; no blocking theme `<script>`) |
 | HTTP headers | Main-document request/response headers via **Request** / **Response** tabs |
@@ -81,7 +81,8 @@ Playwright Chromium
     │  optional: --host-resolver-rules=MAP host ip
     │  optional: --disable-http2 / --disable-quic
     │  optional: ignoreHTTPSErrors
-    │  optional: recordHar (attach → .har.zip) → response field `harZipBase64`
+    │  optional: headed UA / sec-ch-ua (Costco-class HTTP/2 mitigation)
+    │  optional: recordHar — json (default, embed → `har`) or zip (attach → `harZipBase64`)
     │  goto → capture HTML, screenshot, headers, DOM resources, network
     ▼
 JSON response → React state → UI panels (+ client HAR download)
@@ -94,16 +95,16 @@ JSON response → React state → UI panels (+ client HAR download)
    - Allows only `http`/`https`, blocks private/localhost targets, filters unsafe headers.
    - Validates optional `dnsOverride` (public IP; host must match URL hostname).
    - When a valid override is present, **skips Node DNS lookup** for the URL host (traffic will use the forced IP in Chromium).
-3. **Fetch** — `lib/playwright-fetch.ts` launches Chromium per request (with host-resolver args when overriding), applies `extraHTTPHeaders`, sets `ignoreHTTPSErrors` when requested, optionally enables Playwright `recordHar`, navigates with `waitUntil: "load"`, then optionally waits up to a few seconds for `networkidle` (timeout ignored so busy sites still succeed).
+3. **Fetch** — `lib/playwright-fetch.ts` launches Chromium per request (with host-resolver args when overriding), applies headed-compatible identity (UA / `sec-ch-ua`) unless overridden by custom headers, applies `extraHTTPHeaders`, sets `ignoreHTTPSErrors` when requested, optionally enables Playwright `recordHar` (`harFormat` **json** default or **zip**), navigates with `waitUntil: "load"`, then optionally waits up to a few seconds for `networkidle` (timeout ignored so busy sites still succeed). May retry once with `--disable-http2` after `ERR_HTTP2_PROTOCOL_ERROR`.
 4. **Capture** (in this order, after navigation + settle):
    1. Main document headers via Playwright `allHeaders()`
    2. `finalUrl`, `title`, then HTML via `page.content()`
    3. **Screenshot** via `page.screenshot({ fullPage: true, type: "png" })`
    4. DOM resource extraction (`lib/extract-resources.ts`)
-   5. Flush network log (`lib/network-collector.ts`; responses were collected throughout the load via a `response` listener)
-   6. Close browser context (flushes HAR zip when `captureHar` was set); read zip into `harZipBase64` or set `harError` if over the soft byte limit; delete the temp dir
-5. **Respond** — JSON returned to the client (includes `dnsOverride`, `ignoreCertErrors`, `harZipBase64` / `harError`); nothing is persisted to app storage or a database.
-6. **Render** — Client stores the payload in React state and renders panels; HAR zip download is client-side only when `harZipBase64` is present.
+   5. Flush network log (`lib/network-collector.ts`; when Capture HAR is on, body capture is skipped — see [Capture HAR hang](#capture-har-hang-on-heavy-sites-e-g-costco))
+   6. Close browser context (flushes HAR when `captureHar` was set); read archive into `har` or `harZipBase64`, or set `harError` if over `MAX_HAR_BYTES`; delete the temp dir
+5. **Respond** — JSON returned to the client (includes protocol/HAR fields such as `har` / `harZipBase64` / `harError` / `http2FallbackApplied`); nothing is persisted to app storage or a database.
+6. **Render** — Client stores the payload in React state and renders panels; HAR download is client-side only when `har` or `harZipBase64` is present.
 
 ### Screenshot timing
 
@@ -217,11 +218,12 @@ This is not stealth/bot-bypass tooling; it only removes the explicit headless cl
 ### Code map
 
 ```text
-components/UrlForm.tsx      → collect dns / ignoreCert / HTTP protocol / captureHar
+components/UrlForm.tsx      → collect dns / ignoreCert / HTTP protocol / captureHar / harFormat (json default)
 app/api/check/route.ts      → validateDnsOverride + validateUrl({ skipDnsLookup }) + gates
 lib/validate.ts             → validateDnsOverride(), validateUrl()
-lib/playwright-fetch.ts     → --host-resolver-rules; --disable-http2/--disable-quic; ignoreHTTPSErrors; recordHar
-lib/types.ts                → DnsOverride + protocol flags + captureHar / harZipBase64 / harError
+lib/playwright-fetch.ts     → host-resolver; protocol args; headed UA; recordHar json|zip; HAR hang-aware collector
+lib/network-collector.ts    → body/flush timeouts; captureBodies: false when HAR on
+lib/types.ts                → DnsOverride + protocol flags + captureHar / harFormat / har / harZipBase64 / harError
 ```
 
 ---
@@ -286,7 +288,7 @@ Export JSON / PNG / HTML / HAR / CSV — only if the user clicks **Export**; sav
 Layout (top to bottom after a successful check):
 
 1. **Header** — product title and **Light / Dark** theme toggle (persisted).
-2. **Form** — URL, optional force DNS (host + IP), optional **HTTP protocol** controls, custom header editor, then **Ignore certificate errors** and **Capture HAR** (default off), submit.
+2. **Form** — URL, optional force DNS (host + IP), optional **HTTP protocol** controls, custom header editor, then **Ignore certificate errors** and **Capture HAR** (default off; when on, **JSON** default or **Zip** format), submit.
 3. **Meta** — status, final URL, timing, DNS override / TLS ignore / HTTP protocol restrictions / HAR download link (or HAR unavailable) when used, and **Export** menu. Oversized HAR shows a warning alert; page results still render.
 4. **HTTP headers** — main-document headers with **Request** / **Response** tabs (full-width table per tab).
 5. **Resource summary** — collapsible lists of URLs found in the rendered DOM.
@@ -596,27 +598,27 @@ After a successful check, use **Export** on the meta strip (`components/ExportMe
 | Menu item | File | Contents |
 |-----------|------|----------|
 | **JSON (light)** — recommended | `.json` | Full result shape; `screenshotBase64` cleared; `harZipBase64` cleared; network `body` cleared (`bodyEncoding: "empty"`). **Keeps** headers, resources, HTML, network metadata including `remoteIp` / `httpVersion` / `timing`, top-level `navigationTiming`, and `harError` if set |
-| **JSON (full)** | `.json` | Complete `CheckResponse`: screenshot base64, network bodies, HAR zip base64 when present, **and** all timing fields |
+| **JSON (full)** | `.json` | Complete `CheckResponse`: screenshot base64, network bodies, `har` / `harZipBase64` when present, **and** all timing fields |
 | **Screenshot (PNG)** | `.png` | Decoded full-page screenshot (disabled if none) |
 | **HTML source** | `.html` | Captured HTML |
-| **HAR zip** | `.har.zip` | When `harFormat: "zip"` — binaries as zip files |
 | **HAR JSON** | `.har` | When `harFormat: "json"` — binaries base64-inlined |
+| **HAR zip** | `.har.zip` | When `harFormat: "zip"` — binaries as zip files |
 | **Network CSV (index)** | `.csv` | Metadata rows only: `date`, `url`, `host`, `remoteIp`, `remotePort`, `status`, `httpVersion`, `contentType`, `contentSize`, `resourceType`, `bodyEncoding`, `bodyTruncated`, `requestHeaderCount`, `responseHeaderCount` |
 
-**Design rule:** CSV is a spreadsheet-friendly **index**. Request/response header maps, body content, and full timing maps live in **JSON** or **HAR zip**, not CSV.
+**Design rule:** CSV is a spreadsheet-friendly **index**. Request/response header maps, body content, and full timing maps live in **JSON** or **HAR** (`.har` / `.har.zip`), not CSV.
 
-Filenames look like `url-checker-example.com-20260820-143005-light.json` or `….har.zip`.
+Filenames look like `url-checker-example.com-20260820-143005-light.json` or `….har` / `….har.zip`.
 
 ### HAR capture (Playwright session archive)
 
 Optional **Capture HAR** checkbox on the form (under **Custom headers**; per-check default **off**). Admins can disable with `ALLOW_CAPTURE_HAR=0` (see [DEPLOYMENT.md](DEPLOYMENT.md#feature-gates-env--default-allow)).
 
-When Capture HAR is on, choose a format:
+When Capture HAR is on, choose a format (UI order; **JSON** is default):
 
 | `harFormat` | Playwright | Download | Binaries |
 |-------------|------------|----------|----------|
-| **`zip`** (default) | `content: "attach"` → `session.har.zip` | `.har.zip` via `harZipBase64` | Raw files inside the zip |
-| **`json`** | `content: "embed"` → `session.har` | `.har` via `har` | Base64-inlined in HAR JSON |
+| **`json`** (default) | `content: "embed"` → `session.har` | `.har` via `har` | Base64-inlined in HAR JSON |
+| **`zip`** | `content: "attach"` → `session.har.zip` | `.har.zip` via `harZipBase64` | Raw files inside the zip |
 
 1. Record into an **OS temp** directory created with `mkdtemp` under `os.tmpdir()` (prefix `url-checker-har-`; not under the app tree).
 2. Close the browser context (flushes Playwright’s HAR recorder), then `stat` / `readFile` the archive into `har` or `harZipBase64` (or set `harError` if oversize/unreadable).
@@ -642,7 +644,7 @@ The hang was in the **Network requests collector** (`lib/network-collector.ts`):
 3. Costco (and similar Akamai-backed retail sites) keeps **hundreds** of requests alive—ads, analytics, beacons, long-lived streams. Some of those `response.body()` calls **never resolve**.
 4. With Capture HAR on, more resources are observed and body reads compete with HAR’s own body buffering, so the stall was much more likely. The UI waited forever on flush even though navigation, screenshot, and HAR write were already done (or nearly done).
 
-So the process looked stuck on “HAR”, but it was stuck on **network body flush**, not on writing `session.har.zip`.
+So the process looked stuck on “HAR”, but it was stuck on **network body flush**, not on writing `session.har` / `session.har.zip`.
 
 **How it was fixed**
 
@@ -655,7 +657,7 @@ So the process looked stuck on “HAR”, but it was stuck on **network body flu
 **What you should expect now**
 
 - Costco + Capture HAR should complete in roughly the same order of magnitude as a normal check (often ~10s locally, still subject to the 60s API `maxDuration`).
-- Network **Content** tab is empty for that check; use **Export → HAR** (zip or JSON) for bodies.
+- Network **Content** tab is empty for that check; use **Export → HAR** (JSON default or Zip) for bodies.
 - Without Capture HAR, Content tab still captures bodies, but hung reads can no longer block the whole check beyond the timeouts above.
 
 Related: headless Costco can also fail earlier with `net::ERR_HTTP2_PROTOCOL_ERROR` — see [Headless / ERR_HTTP2_PROTOCOL_ERROR](#headless--err_http2_protocol_error-e-g-costco).
@@ -667,7 +669,7 @@ Plan: [`docs/HAR_ZIP_IMPLEMENT_PLAN.md`](docs/HAR_ZIP_IMPLEMENT_PLAN.md).
 | Item | Detail |
 |------|--------|
 | **What** | Soft size cap on the archive file (zip or `.har`) before returning it |
-| **Default** | `25_000_000` (~25 MB) |
+| **Default** | `45_000_000` (~45 MB) |
 | **Where to change** | `MAX_HAR_BYTES` in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts) |
 | **If exceeded** | Check succeeds; `har` / `harZipBase64` null; `harError` set; UI warning |
 
@@ -793,7 +795,7 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
 | `disableHttp3` | boolean | No | Disable HTTP/3 via Chromium `--disable-quic` (no `--disable-http3`). Default `false`. Same gate |
 | `http11Only` | boolean | No | Preset: expands to both disables (≈ HTTP/1.1 only). Default `false`. Same gate |
 | `captureHar` | boolean | No | When `true`, record Playwright HAR and return `har` or `harZipBase64` per `harFormat`. Rejected with **400** if `ALLOW_CAPTURE_HAR` disabled |
-| `harFormat` | `"zip"` \| `"json"` | No | Packaging when `captureHar` is true. Default **`zip`**. `zip` = attach / binaries as files; `json` = embed / binaries as base64 |
+| `harFormat` | `"json"` \| `"zip"` | No | Packaging when `captureHar` is true. Default **`json`**. `json` = embed / binaries as base64; `zip` = attach / binaries as files |
 
 #### Success response
 
@@ -892,7 +894,7 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
 | `disableHttp2` / `disableHttp3` / `http11Only` | Protocol restrictions applied for this check |
 | `chromiumProtocolArgs` | Chromium launch args added (e.g. `["--disable-http2","--disable-quic"]`), or `[]` |
 | `http2FallbackApplied` | `true` if navigation was retried with `--disable-http2` after `ERR_HTTP2_PROTOCOL_ERROR` |
-| `harFormat` | `"zip"` \| `"json"` when HAR was requested; otherwise `null` |
+| `harFormat` | `"json"` \| `"zip"` when HAR was requested; otherwise `null` |
 | `har` | HAR 1.2 JSON text when `harFormat: "json"` and within limit; otherwise `null` |
 | `harZipBase64` | `.har.zip` as base64 when `harFormat: "zip"` and within limit; otherwise `null` |
 | `harError` | Why HAR download is unavailable (e.g. over `MAX_HAR_BYTES`); check still succeeds |
@@ -1021,7 +1023,7 @@ Defined mainly in `lib/playwright-fetch.ts` and related libs:
 | Max network body bytes | 512,000 | Per-response body capture for Content tab (text or base64); truncated beyond this. **Skipped entirely when Capture HAR is on** (bodies live in the HAR) |
 | Network body read timeout | 5,000 ms | Per `response.body()`; prevents hang on streaming/analytics responses |
 | Network collector flush timeout | 15,000 ms | Max wait for in-flight collectors before continuing the check |
-| **`MAX_HAR_BYTES`** | **25,000,000** | Soft HAR archive size cap in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Over limit → `har` / `harZipBase64` null + `harError`; **page results still succeed**. See [HAR capture](#har-capture-playwright-session-archive). |
+| **`MAX_HAR_BYTES`** | **45,000,000** (~45 MB) | Soft HAR archive size cap in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Over limit → `har` / `harZipBase64` null + `harError`; **page results still succeed**. See [HAR capture](#har-capture-playwright-session-archive). |
 | Content size | Prefer `Content-Length`; else response body length when available | Shown in network table |
 | DNS override | Chromium `--host-resolver-rules=MAP host ip` | Process-wide for that browser instance |
 | API `maxDuration` | 60s | Next.js route limit |
@@ -1045,7 +1047,7 @@ Built-in guards (v1):
 - Header name/value length and count limits.
 - Optional DNS override must use a **public** IP and a host that **matches** the URL hostname; Node DNS lookup is skipped only when a valid override is present (prevents using MAP to reach RFC1918 addresses).
 - **Ignore certificate errors** is **off** per check by default; the server **allows** the option when `ALLOW_IGNORE_CERT_ERRORS` is unset. Set `ALLOW_IGNORE_CERT_ERRORS=0` to hide the UI control and reject API requests that ask for it. Enabling ignore only relaxes TLS verification inside Playwright and does not weaken SSRF / private-IP guards.
-- **Capture HAR** is **off** per check by default; the server **allows** the option when `ALLOW_CAPTURE_HAR` is unset. Set `ALLOW_CAPTURE_HAR=0` to disable. When on, HAR is written only to an OS temp path during the check, returned in the API response, then deleted — not stored in the app directory or a database.
+- **Capture HAR** is **off** per check by default; the server **allows** the option when `ALLOW_CAPTURE_HAR` is unset. Set `ALLOW_CAPTURE_HAR=0` to disable. When on, default format is **`json`** (optional **`zip`**); HAR is written only to an OS temp path during the check, returned in the API response, then deleted — not stored in the app directory or a database.
 - **HTTP protocol controls** are **off** per check by default; the server **allows** them when `ALLOW_HTTP_PROTOCOL_CONTROLS` is unset. Set `ALLOW_HTTP_PROTOCOL_CONTROLS=0` to disable. Only allowlisted Chromium args (`--disable-http2`, `--disable-quic`) are applied — clients cannot pass arbitrary launch flags.
 - HTML preview uses an empty `sandbox` attribute so scripts do not execute in the UI.
 
@@ -1063,7 +1065,7 @@ This is not a full multi-tenant hardening suite. Do not expose an open instance 
 - Sites that block headless browsers, require interactive CAPTCHAs, or depend on special client TLS may fail or look incomplete.
 - DNS override maps a single exact hostname (no multi-host or wildcard UI yet).
 - Third-party hosts are never remapped by the DNS override.
-- Export is client-side only (no server archive store); Network CSV is a metadata index (no header/body cells); HAR is optional via **Capture HAR** as `.har.zip` or `.har` subject to `MAX_HAR_BYTES` (see [HAR capture](#har-capture-playwright-session-archive)).
+- Export is client-side only (no server archive store); Network CSV is a metadata index (no header/body cells); HAR is optional via **Capture HAR** as `.har` (default) or `.har.zip` subject to `MAX_HAR_BYTES` (see [HAR capture](#har-capture-playwright-session-archive)).
 - On Capture HAR checks, Network Content bodies are omitted by design so heavy sites cannot hang on `response.body()` flush (see [Capture HAR hang on heavy sites](#capture-har-hang-on-heavy-sites-e-g-costco)).
 - HTTP protocol controls only restrict Chromium negotiation via `--disable-http2` / `--disable-quic`; they cannot force HTTP/2 or HTTP/3, and Playwright has no per-request `httpVersion` API (see [HTTP protocol controls](#http-protocol-controls)).
 - No PDF export or editable HTML workspace.

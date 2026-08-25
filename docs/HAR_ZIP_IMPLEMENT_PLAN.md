@@ -21,7 +21,7 @@ Wire transport still uses base64 **only** inside `POST /api/check` JSON (`harZip
    - `harZipBase64: string | null` — zip bytes as base64 for JSON transport
    - `harError: string | null` — unchanged semantics (check still succeeds if over limit)
    - **Remove** `har: string | null` (JSON HAR text) on this branch — download is zip-only
-3. **Soft limit:** rename conceptually to `MAX_HAR_BYTES` (default `25_000_000`) applied to zip **file size** before base64 encoding
+3. **Soft limit:** rename conceptually to `MAX_HAR_BYTES` (default `45_000_000`, ~45 MB) applied to zip **file size** before base64 encoding
 4. **Client:** Export / meta download `*.har.zip` (`application/zip`)
 5. **Ephemeral temp:** unchanged — OS temp dir, delete after read
 
@@ -52,7 +52,7 @@ Both modes are supported when Capture HAR is on:
 
 | UI / API | Playwright | Field | Binaries |
 |----------|------------|-------|----------|
-| Zip (default) | `attach` + `.har.zip` | `harZipBase64` | Files in zip |
-| JSON | `embed` + `.har` | `har` | Base64 in JSON |
+| JSON (default) | `embed` + `.har` | `har` | Base64 in JSON |
+| Zip | `attach` + `.har.zip` | `harZipBase64` | Files in zip |
 
-Request: `captureHar: true` + optional `harFormat: "zip" | "json"` (default `zip`).
+Request: `captureHar: true` + optional `harFormat: "json" | "zip"` (default `json`).

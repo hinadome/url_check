@@ -7,6 +7,7 @@
 #   NODE_OPTIONS (optional heap for large HAR + screenshot JSON)
 #
 # After image rebuild, the app includes:
+#   - Capture HAR: harFormat json (default) or zip; MAX_HAR_BYTES ~45 MB
 #   - Capture HAR hang fix (skip network bodies when HAR on; body/flush timeouts)
 #   - Headless ERR_HTTP2_PROTOCOL_ERROR mitigation (headed UA / sec-ch-ua)
 #   - HTTP protocol controls (--disable-http2 / --disable-quic)

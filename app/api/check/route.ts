@@ -86,7 +86,7 @@ export async function POST(request: Request) {
     const wantIgnoreCert = body.ignoreCertErrors === true;
     const wantCaptureHar = body.captureHar === true;
     const harFormat: HarFormat =
-      body.harFormat === "json" ? "json" : "zip";
+      body.harFormat === "zip" ? "zip" : "json";
     const protocol = resolveHttpProtocolOptions({
       disableHttp2: body.disableHttp2 === true,
       disableHttp3: body.disableHttp3 === true,

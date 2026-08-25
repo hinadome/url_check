@@ -39,7 +39,7 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
   const [dnsIp, setDnsIp] = useState("");
   const [ignoreCertErrors, setIgnoreCertErrors] = useState(false);
   const [captureHar, setCaptureHar] = useState(false);
-  const [harFormat, setHarFormat] = useState<HarFormat>("zip");
+  const [harFormat, setHarFormat] = useState<HarFormat>("json");
   const [disableHttp2, setDisableHttp2] = useState(false);
   const [disableHttp3, setDisableHttp3] = useState(false);
   const [http11Only, setHttp11Only] = useState(false);
@@ -131,7 +131,7 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
       dnsOverride,
       ignoreCertErrors: flags.allowIgnoreCertErrors && ignoreCertErrors,
       captureHar: wantHar,
-      harFormat: wantHar ? harFormat : "zip",
+      harFormat: wantHar ? harFormat : "json",
       disableHttp2: wantProtocol && disableHttp2,
       disableHttp3: wantProtocol && disableHttp3,
       http11Only: wantProtocol && http11Only,
@@ -284,22 +284,6 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
                 <input
                   type="radio"
                   name="harFormat"
-                  value="zip"
-                  checked={harFormat === "zip"}
-                  onChange={() => setHarFormat("zip")}
-                />
-                <span>
-                  Zip (binaries as files)
-                  <span className="muted field-checkbox-hint">
-                    {" "}
-                    — <code>.har.zip</code>, Playwright <code>content: attach</code>
-                  </span>
-                </span>
-              </label>
-              <label className="field-radio">
-                <input
-                  type="radio"
-                  name="harFormat"
                   value="json"
                   checked={harFormat === "json"}
                   onChange={() => setHarFormat("json")}
@@ -309,6 +293,22 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
                   <span className="muted field-checkbox-hint">
                     {" "}
                     — single <code>.har</code>, Playwright <code>content: embed</code>
+                  </span>
+                </span>
+              </label>
+              <label className="field-radio">
+                <input
+                  type="radio"
+                  name="harFormat"
+                  value="zip"
+                  checked={harFormat === "zip"}
+                  onChange={() => setHarFormat("zip")}
+                />
+                <span>
+                  Zip (binaries as files)
+                  <span className="muted field-checkbox-hint">
+                    {" "}
+                    — <code>.har.zip</code>, Playwright <code>content: attach</code>
                   </span>
                 </span>
               </label>

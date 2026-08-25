@@ -10,8 +10,8 @@ export type DnsOverride = {
 
 /**
  * How Playwright records HAR bodies when `captureHar` is true.
- * - `zip` — `content: "attach"` → `.har.zip` (binaries as files)
  * - `json` — `content: "embed"` → `.har` JSON (binaries as base64 in HAR)
+ * - `zip` — `content: "attach"` → `.har.zip` (binaries as files)
  */
 export type HarFormat = "zip" | "json";
 
@@ -26,7 +26,7 @@ export type CheckRequest = {
    * response (ephemeral; not written to app storage). Default false.
    */
   captureHar?: boolean;
-  /** HAR packaging when `captureHar` is true. Default `zip`. */
+  /** HAR packaging when `captureHar` is true. Default `json`. */
   harFormat?: HarFormat;
   /** Chromium `--disable-http2` for this check. Default false. */
   disableHttp2?: boolean;
