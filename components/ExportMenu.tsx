@@ -6,6 +6,7 @@ import {
   exportHtmlSource,
   exportJson,
   exportNetworkCsv,
+  exportNetworkFailedCsv,
   exportScreenshotPng,
   hasHarDownload,
 } from "@/lib/export";
@@ -21,6 +22,7 @@ export function ExportMenu({ result }: ExportMenuProps) {
   const menuId = useId();
   const hasScreenshot = Boolean(result.screenshotBase64);
   const hasHar = hasHarDownload(result);
+  const hasFailedNetwork = (result.networkFailedRequests ?? []).length > 0;
   const harError = result.harError ?? null;
   const harLabel =
     result.harFormat === "json"
@@ -156,6 +158,24 @@ export function ExportMenu({ result }: ExportMenuProps) {
             >
               <span>Download network CSV (index)</span>
               <span className="muted">Metadata only — no headers or bodies</span>
+            </button>
+          </li>
+          <li role="none">
+            <button
+              type="button"
+              role="menuitem"
+              className="export-menu-item"
+              disabled={!hasFailedNetwork}
+              onClick={() => run(() => exportNetworkFailedCsv(result))}
+            >
+              <span>Download failed network CSV</span>
+              {hasFailedNetwork ? (
+                <span className="muted">
+                  requestfailed rows ({result.networkFailedRequests!.length})
+                </span>
+              ) : (
+                <span className="muted">No failed requests in this check</span>
+              )}
             </button>
           </li>
         </ul>

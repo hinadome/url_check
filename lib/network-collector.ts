@@ -2,17 +2,28 @@ import type { Page, Request, Response } from "playwright";
 import type {
   HeaderPair,
   NetworkBodyEncoding,
+  NetworkFailedRequestEntry,
   NetworkRequestEntry,
   ResourceTiming,
 } from "./types";
 
 const MAX_NETWORK_ENTRIES = 2_000;
+/** Default cap for requestfailed rows; override with MAX_NETWORK_FAILED_ENTRIES. */
+const DEFAULT_MAX_NETWORK_FAILED_ENTRIES = 500;
 /** Cap captured body bytes per response to keep API payloads manageable */
 const MAX_BODY_BYTES = 512_000;
 /** `response.body()` can hang forever on streaming/analytics requests (e.g. Costco). */
 const BODY_READ_TIMEOUT_MS = 5_000;
 /** Cap how long flush waits for in-flight collectors before continuing. */
 const FLUSH_TIMEOUT_MS = 15_000;
+
+export function maxNetworkFailedEntries(): number {
+  const raw = process.env.MAX_NETWORK_FAILED_ENTRIES;
+  if (raw == null || raw.trim() === "") return DEFAULT_MAX_NETWORK_FAILED_ENTRIES;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_MAX_NETWORK_FAILED_ENTRIES;
+  return Math.min(Math.floor(n), 10_000);
+}
 
 function hostFromUrl(url: string): string {
   try {
@@ -194,10 +205,13 @@ export function attachNetworkCollector(
   options: NetworkCollectorOptions = {},
 ): {
   entries: NetworkRequestEntry[];
+  failedEntries: NetworkFailedRequestEntry[];
   flush: () => Promise<void>;
 } {
   const captureBodies = options.captureBodies !== false;
+  const maxFailed = maxNetworkFailedEntries();
   const entries: NetworkRequestEntry[] = [];
+  const failedEntries: NetworkFailedRequestEntry[] = [];
   const pending: Promise<void>[] = [];
   /** Map Playwright Request → entry for timing updates on requestfinished */
   const entryByRequest = new WeakMap<Request, NetworkRequestEntry>();
@@ -270,6 +284,28 @@ export function attachNetworkCollector(
     );
   });
 
+  page.on("requestfailed", (request) => {
+    if (!accepting || failedEntries.length >= maxFailed) {
+      return;
+    }
+    try {
+      const url = request.url();
+      const failure = request.failure();
+      failedEntries.push({
+        url,
+        host: hostFromUrl(url),
+        method: request.method(),
+        status: -1,
+        resourceType: request.resourceType(),
+        date: new Date().toISOString(),
+        failureText: failure?.errorText?.trim() || "request failed",
+        requestHeaders: toHeaderPairs(request.headers()),
+      });
+    } catch {
+      // Ignore individual failure collection errors.
+    }
+  });
+
   page.on("requestfinished", (request) => {
     const entry = entryByRequest.get(request);
     if (!entry) return;
@@ -282,12 +318,17 @@ export function attachNetworkCollector(
 
   return {
     entries,
+    failedEntries,
     flush: async () => {
       accepting = false;
       await withTimeout(Promise.all(pending), FLUSH_TIMEOUT_MS, () => undefined);
       // Give late requestfinished handlers a tick to update responseEnd
       await new Promise<void>((resolve) => setImmediate(resolve));
       entries.sort((a, b) => {
+        const byDate = a.date.localeCompare(b.date);
+        return byDate !== 0 ? byDate : a.url.localeCompare(b.url);
+      });
+      failedEntries.sort((a, b) => {
         const byDate = a.date.localeCompare(b.date);
         return byDate !== 0 ? byDate : a.url.localeCompare(b.url);
       });

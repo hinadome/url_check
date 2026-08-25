@@ -5,6 +5,7 @@ import { ContentPreview } from "@/components/ContentPreview";
 import { ExportMenu } from "@/components/ExportMenu";
 import { HeadersPanel } from "@/components/HeadersPanel";
 import { NetworkRequestsPanel } from "@/components/NetworkRequestsPanel";
+import { NetworkFailedRequestsPanel } from "@/components/NetworkFailedRequestsPanel";
 import { ResourceSummary } from "@/components/ResourceSummary";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UrlForm, type UrlFormSubmit } from "@/components/UrlForm";
@@ -164,6 +165,10 @@ export default function Home() {
             key={`${result.finalUrl}-${result.timingMs}`}
             requests={result.networkRequests ?? []}
             navigationTiming={result.navigationTiming ?? null}
+          />
+          <NetworkFailedRequestsPanel
+            key={`failed-${result.finalUrl}-${result.timingMs}`}
+            requests={result.networkFailedRequests ?? []}
           />
         </div>
       )}

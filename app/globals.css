@@ -881,6 +881,24 @@ a:hover {
   width: 5.5rem;
 }
 
+.network-table .col-method {
+  width: 4.5rem;
+}
+
+.network-table .col-failure {
+  width: 14rem;
+}
+
+.network-failure-message {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+.network-failed-requests {
+  margin-top: 1.5rem;
+}
+
 .network-toggle-btn {
   padding: 0.2rem 0.45rem;
   min-width: 2rem;
@@ -1220,7 +1238,8 @@ a:hover {
 .network-http,
 .network-size,
 .network-type,
-.network-ip {
+.network-ip,
+.network-method {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1233,13 +1252,15 @@ a:hover {
 }
 
 .network-ip,
-.network-http {
+.network-http,
+.network-method {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 0.75rem;
 }
 
 .network-host,
-.network-ctype {
+.network-ctype,
+.network-failure {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

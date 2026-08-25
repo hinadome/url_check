@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Light / dark mode** toggle in the header (`ThemeProvider` + `ThemeToggle`): persists in `localStorage` (`url-checker-theme`), defaults to system preference, applies `data-theme` on `<html>` after mount (no blocking script — avoids Safari React script / hydration issues); CSS `prefers-color-scheme` covers the pre-JS paint.
 - Network **Remote IP** (`remoteIp` / `remotePort` via `response.serverAddr()`) and **HTTP** (`httpVersion` via `response.httpVersion()`) columns.
+- **Failed / incomplete requests** panel below Network requests (`components/NetworkFailedRequestsPanel.tsx`, `networkFailedRequests` on `CheckResponse`):
+  - Collects Playwright **`requestfailed`** only (typical HAR `response.status: -1`); **not** HTTP 4xx/5xx (those stay in Network requests)
+  - Columns: date, method, URL, host, type, status `-1`, failure text; expand for request headers
+  - Filters: URL / host / type / failure text; panel **hidden when empty**
+  - Cap **`MAX_NETWORK_FAILED_ENTRIES`** (default **500**, env override, clamp 1–10000); excess failures dropped for UI/API
+  - **Excluded / deferred:** incomplete-at-flush; failures after collector flush; reconstructing from HAR download (HAR may list more `-1` rows than the UI)
+  - Export: JSON keeps the array; **Download failed network CSV** when non-empty
+  - Plan: [`docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md`](docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md)
 - Network row **Timing** tab: per-request Resource Timing (`request.timing()` → `timing`) plus page **Navigation Timing** on document rows (`navigationTiming` on the check result).
 - Timing tab **waterfall graph** (`components/TimingWaterfall.tsx`): stacked + per-phase bars for Resource timing; Navigation waterfall on document rows; **Queueing / stalled** segments fill timeline gaps (documented in README).
 - **Date** column on Network requests (`date` ISO timestamp when each response was observed; rows sorted chronologically).
@@ -39,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **JSON (full)** — complete payload including screenshot, bodies, and all timing fields
   - **Screenshot (PNG)**, **HTML source**
   - **Network CSV (index)** — metadata columns only (includes remote IP / HTTP version; no header maps, bodies, or full timing maps)
+  - **Failed network CSV** — `requestfailed` / `networkFailedRequests` index when any exist
 - Deploy configs for **Vercel** (`vercel.json`) and **Netlify** (`netlify.toml`) with Next.js native hosting; README documents Playwright serverless limits
 - **VM** and **container** deploy scripts plus [`DEPLOYMENT.md`](DEPLOYMENT.md): `scripts/deploy-vm.sh`, `scripts/deploy-container.sh`, `Dockerfile`, `docker-compose.yml`, `deploy/url-checker.service`, `deploy/nginx-url-checker.conf`
 - GitHub Actions **manual** SSH VM deploy: [`.github/workflows/deploy-vm-ssh.yml`](.github/workflows/deploy-vm-ssh.yml) (`workflow_dispatch` only); optional `VM_APP_URL` secret
@@ -98,10 +107,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- `README.md` — architecture / lifecycle cover dual HAR (`json` default / `zip`), headless HTTP/2 mitigation, Capture HAR hang fix; [HTTP protocol controls](README.md#http-protocol-controls); [HAR capture](README.md#har-capture-playwright-session-archive) (`MAX_HAR_BYTES` ~45 MB); plan [`docs/HAR_ZIP_IMPLEMENT_PLAN.md`](docs/HAR_ZIP_IMPLEMENT_PLAN.md)
-- [`DEPLOYMENT.md`](DEPLOYMENT.md) — feature gates; HAR formats (JSON default → Zip); hang fix / headless HTTP/2 ops notes; `MAX_HAR_BYTES`; troubleshooting; re-run notes; replay script pointer
+- `README.md` — [Failed / incomplete requests](README.md#failed--incomplete-requests): included vs excluded, HAR vs UI gap, `MAX_NETWORK_FAILED_ENTRIES` cap; architecture / HAR dual format; [HTTP protocol controls](README.md#http-protocol-controls); [HAR capture](README.md#har-capture-playwright-session-archive)
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) — feature gates; `MAX_NETWORK_FAILED_ENTRIES`; Failed / incomplete requests ops notes + troubleshooting (HAR `-1` vs UI); HAR formats; hang fix / headless HTTP/2; re-run notes
+- [`docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md`](docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md) — failed-requests UI design (implemented; incomplete-at-flush deferred)
 - [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md) — Chromium `--disable-http2` / `--disable-quic` design (implemented)
-- Deploy script headers: [`scripts/deploy-vm.sh`](scripts/deploy-vm.sh), [`scripts/deploy-container.sh`](scripts/deploy-container.sh) — HAR json/zip defaults, hang fix, headless HTTP/2, feature gates
+- Deploy script headers: [`scripts/deploy-vm.sh`](scripts/deploy-vm.sh), [`scripts/deploy-container.sh`](scripts/deploy-container.sh) — HAR json/zip, failed-requests cap, hang fix, headless HTTP/2, feature gates
+- [`deploy/url-checker.service`](deploy/url-checker.service) — commented `MAX_NETWORK_FAILED_ENTRIES` / `ALLOW_*` examples
 - [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) — HAR replay CLI (`scripts/replay-har.mjs`), DevTools exports, offline verification, progressive screenshots
 - [`CONVERT_HAR.md`](CONVERT_HAR.md) — attach `.har.zip` ↔ embed `.har` converter (`scripts/convert-har.mjs`)
 - `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.

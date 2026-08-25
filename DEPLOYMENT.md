@@ -61,14 +61,15 @@ After `git pull` (or your usual sync), re-run the same script on the VM:
 
 That path is idempotent for updates: stops `url-checker` if running, runs `npm ci` + Playwright Chromium install + `npm run build`, rewrites/restarts the systemd unit, and leaves other nginx sites alone (skips rewriting this app’s site when unchanged; preserves HTTPS site files from `setup-https.sh`).
 
-**Capture HAR / TLS ignore / HTTP protocol / replay:** no extra deploy script flags. After `git pull` + rebuild, these ship with the app:
+**Capture HAR / TLS ignore / HTTP protocol / failed requests / replay:** no extra deploy script flags. After `git pull` + rebuild, these ship with the app:
 
 - HAR dual format — UI/API default **`harFormat: "json"`** (embed → `har` / `.har`); optional **`zip`** (attach → `harZipBase64` / `.har.zip`); soft cap **`MAX_HAR_BYTES`** = `45_000_000` (~45 MB)
 - Capture HAR no longer hangs on heavy sites (Costco-class): network collector skips per-response bodies when HAR is on; body/flush timeouts — see [README — Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco)
+- **Failed / incomplete requests** UI: Playwright `requestfailed` (typical HAR `status: -1`) below Network requests; cap **`MAX_NETWORK_FAILED_ENTRIES`** (default **500**, clamp 1–10000) — see [README](README.md#failed--incomplete-requests)
 - Headless `ERR_HTTP2_PROTOCOL_ERROR` mitigation (headed UA / `sec-ch-ua`; optional `--disable-http2` retry) — see [README — Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco)
 - HTTP protocol Chromium args (`--disable-http2` / `--disable-quic`) and feature gates (`ALLOW_IGNORE_CERT_ERRORS`, `ALLOW_CAPTURE_HAR`, `ALLOW_HTTP_PROTOCOL_CONTROLS`)
 
-Set `ALLOW_*` in `.env` or systemd/Compose and **restart**. Offline HAR tools (not started by deploy): replay — [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) / [`scripts/replay-har.mjs`](scripts/replay-har.mjs); convert zip ↔ embed — [`CONVERT_HAR.md`](CONVERT_HAR.md) / [`scripts/convert-har.mjs`](scripts/convert-har.mjs).
+Set `ALLOW_*` / `MAX_NETWORK_FAILED_ENTRIES` in `.env`, systemd `Environment=`, or Compose and **restart**. Offline HAR tools (not started by deploy): replay — [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) / [`scripts/replay-har.mjs`](scripts/replay-har.mjs); convert zip ↔ embed — [`CONVERT_HAR.md`](CONVERT_HAR.md) / [`scripts/convert-har.mjs`](scripts/convert-har.mjs).
 
 ### Requirements
 
@@ -188,7 +189,7 @@ curl -sI "http://127.0.0.1:${NGINX_PORT:-80}/"
 
 **HTTPS:** after HTTP deploy, run [`scripts/setup-https.sh`](scripts/setup-https.sh) with your domain (Let's Encrypt + nginx 443). Or terminate TLS on a cloud load balancer and set `APP_URL=https://your.domain`.
 
-### App features that affect the host (HAR, TLS ignore, HTTP protocol)
+### App features that affect the host (HAR, TLS ignore, HTTP protocol, failed requests)
 
 These are **runtime UI/API options**, not extra deploy script flags. After you re-run `deploy-vm.sh` (or rebuild the container), they are available with no further script changes.
 
@@ -200,11 +201,21 @@ These are **runtime UI/API options**, not extra deploy script flags. After you r
 | `ALLOW_CAPTURE_HAR` | allow (unset) | Same for Capture HAR / `captureHar: true` |
 | `ALLOW_HTTP_PROTOCOL_CONTROLS` | allow (unset) | Same for **HTTP/1.1 only** / Disable HTTP/2 / Disable HTTP/3 (`http11Only`, `disableHttp2`, `disableHttp3`) |
 
-Enforced in [`lib/feature-flags.ts`](lib/feature-flags.ts) + `POST /api/check`. UI reads `GET /api/config`. Set on the **running** Node process (`.env`, systemd `Environment=`, Compose `environment:`), then **restart** the app. See [`.env.example`](.env.example).
+Feature gates: [`lib/feature-flags.ts`](lib/feature-flags.ts) + `POST /api/check`. UI reads `GET /api/config`.
+
+#### Other runtime env (not feature gates)
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `MAX_NETWORK_FAILED_ENTRIES` | `500` | Cap Playwright **`requestfailed`** rows in UI/API per check (clamp **1–10000**; invalid → 500). Excess failures dropped; check still succeeds. Not a 1:1 HAR `status: -1` list — see [README — Failed / incomplete requests](README.md#failed--incomplete-requests). |
+
+Set on the **running** Node process (`.env`, systemd `Environment=` / comments in [`deploy/url-checker.service`](deploy/url-checker.service), Compose `environment:`), then **restart** the app. See [`.env.example`](.env.example).
 
 ```bash
-# Public/shared host — lock down
+# Public/shared host — lock down feature gates
 ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
+# Optional: raise failed-request cap
+# MAX_NETWORK_FAILED_ENTRIES=1000
 # then: sudo systemctl restart url-checker
 ```
 
@@ -213,10 +224,11 @@ ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
 | **Ignore certificate errors** | No extra packages. Playwright `ignoreHTTPSErrors` for that check only. Per-check default **off**; server allow default **on**. |
 | **HTTP protocol controls** | No extra packages. Allowlisted Chromium launch args only: `--disable-http2` and/or `--disable-quic` (HTTP/3). UI order: HTTP/1.1 only → Disable HTTP/2 → Disable HTTP/3 (QUIC). Per-check default **off**; server allow default **on**. Does not change nginx. See [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md) and [README — HTTP protocol](README.md#http-protocol-controls). |
 | **Headless / Costco-class sites** | No deploy flags. App sets headed Chrome UA / `sec-ch-ua` by default and may auto-retry with `--disable-http2` after `ERR_HTTP2_PROTOCOL_ERROR`. See [README](README.md#headless--err_http2_protocol_error-e-g-costco). |
+| **Failed / incomplete requests** | No deploy flags or packages. Collects Playwright `requestfailed` into `networkFailedRequests`; panel below Network requests (**hidden when empty**). Cap with `MAX_NETWORK_FAILED_ENTRIES` (default 500). **Excluded from UI:** HTTP 4xx/5xx (stay in Network responses); incomplete-at-flush; failures after collector flush; reconstructing from HAR (HAR may show more `status: -1` than the UI). Details: [README](README.md#failed--incomplete-requests). |
 | **Capture HAR** | Playwright `recordHar` (`mode: "full"`) writes an ephemeral archive under OS temp (`/tmp/url-checker-har-*`), returns it in the API response, then **deletes** the directory. UI radios (JSON → Zip) / `harFormat` on `POST /api/check`: **`json`** (default, embed → `har` / `.har`) or **`zip`** (attach → `harZipBase64` / `.har.zip`). See format table below. |
 | HAR + heavy sites (ops) | When Capture HAR is on, the app **does not** call `response.body()` for the Network Content tab (bodies are in the HAR). Body reads elsewhere are capped (5s each; flush ≤15s) so Costco/Akamai long-lived streams cannot stall the check. Keep `PROXY_READ_TIMEOUT` ≥ ~120s. Details: [README — Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco). |
 | HAR soft limit | `MAX_HAR_BYTES` = `45_000_000` (~45 MB) in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Applies to the **archive file** (zip or embed `.har`). Over that, the **check still succeeds**; `har` / `harZipBase64` are omitted and the UI shows `harError`. Raise the constant and rebuild to change it. |
-| Large JSON | A successful check with HAR can still be tens of MB (large `har` string or `harZipBase64` + screenshot). Network Content bodies are omitted when HAR is on (smaller than duplicating every body in JSON). nginx streams upstream (`proxy_buffering off`). Watch Node heap, `/tmp`, and proxy timeouts if you raise `MAX_HAR_BYTES`. |
+| Large JSON | A successful check with HAR can still be tens of MB (large `har` string or `harZipBase64` + screenshot). Network Content bodies are omitted when HAR is on (smaller than duplicating every body in JSON). Failed-request rows are small metadata. nginx streams upstream (`proxy_buffering off`). Watch Node heap, `/tmp`, and proxy timeouts if you raise `MAX_HAR_BYTES`. |
 | **Replay (offline)** | Not a server feature. After download, replay with [`scripts/replay-har.mjs`](scripts/replay-har.mjs) ([`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md)). Convert zip ↔ embed with [`scripts/convert-har.mjs`](scripts/convert-har.mjs) ([`CONVERT_HAR.md`](CONVERT_HAR.md)). |
 
 **Capture HAR formats**
@@ -226,7 +238,7 @@ ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
 | **`json`** (default) | `content: "embed"` → `session.har` | `har` | `.har` | Base64-inlined in HAR JSON |
 | **`zip`** | `content: "attach"` → `session.har.zip` | `harZipBase64` | `.har.zip` | Raw files inside the zip |
 
-Details: [README — HAR capture](README.md#har-capture-playwright-session-archive) · [Capture HAR hang (Costco)](README.md#capture-har-hang-on-heavy-sites-e-g-costco) · [Headless HTTP/2 error](README.md#headless--err_http2_protocol_error-e-g-costco).
+Details: [README — HAR capture](README.md#har-capture-playwright-session-archive) · [Failed / incomplete requests](README.md#failed--incomplete-requests) · [Capture HAR hang (Costco)](README.md#capture-har-hang-on-heavy-sites-e-g-costco) · [Headless HTTP/2 error](README.md#headless--err_http2_protocol_error-e-g-costco).
 
 Skip nginx entirely:
 
@@ -302,6 +314,7 @@ curl -sI "http://127.0.0.1:${PORT:-3000}/"
 | Check works but **HAR download unavailable** | Expected when the archive exceeds `MAX_HAR_BYTES` (~45 MB) — page results still render. Confirm `/tmp` is writable and has free space (`df -h /tmp`). Raise the constant in `lib/playwright-fetch.ts` and re-run `./scripts/deploy-vm.sh` if you need larger HARs. |
 | Capture HAR on Costco (etc.) **never finishes** / spins forever | Fixed in current app: hung `response.body()` flush, not HAR zip write. **Re-pull and re-run `./scripts/deploy-vm.sh`** (or rebuild the container). After update, Network Content is empty when HAR is on; bodies are in the HAR download. See [README — Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco). If still slow, raise nginx `PROXY_READ_TIMEOUT` / check OOM. |
 | `page.goto: net::ERR_HTTP2_PROTOCOL_ERROR` (e.g. Costco) | Fixed in current app via headed UA/`sec-ch-ua` + optional `--disable-http2` retry. Re-deploy latest build. See [README — Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco). |
+| HAR has `status: -1` URLs but **Failed / incomplete** panel empty or shorter | Expected: UI only lists Playwright `requestfailed` during the check (not a full HAR dump). Incomplete-at-flush and post-flush failures are excluded. Cap with `MAX_NETWORK_FAILED_ENTRIES` (default 500) — set in systemd/Compose and restart. See [README](README.md#failed--incomplete-requests). |
 | Check **OOM** / nginx 502 when Capture HAR is on | Peak RAM is Chromium + Node JSON (screenshot + optional large `har` or `harZipBase64`). Add RAM/swap; do not capture HAR on huge sites; optionally set `NODE_OPTIONS=--max-old-space-size=…` on the **running** systemd unit (the deploy script’s heap cap applies to **build** only). |
 | Leftover `/tmp/url-checker-har-*` | Abnormal (crash before cleanup). Safe to `rm -rf` those dirs; the app does not persist HAR. |
 
@@ -323,7 +336,7 @@ Supporting Compose settings:
 - Healthcheck against `/`
 - `restart: unless-stopped`
 - Optional `NODE_OPTIONS` in Compose (commented) if Capture HAR + large pages OOM the Node process
-- After rebuild: Capture HAR hang fix, headless HTTP/2 mitigation, HAR formats (default **json** / optional **zip**, `MAX_HAR_BYTES` ~45 MB) are in the image (no Compose env required beyond optional feature gates)
+- After rebuild: Capture HAR hang fix, headless HTTP/2 mitigation, HAR formats (default **json** / optional **zip**, `MAX_HAR_BYTES` ~45 MB), and Failed / incomplete requests UI (`MAX_NETWORK_FAILED_ENTRIES`) are in the image (no Compose env required beyond optional feature gates / caps)
 
 ### Requirements
 
@@ -491,9 +504,10 @@ git checkout <ref>
 
 ## Related docs
 
-- App overview and API: [README.md](README.md) (incl. [HTTP protocol controls](README.md#http-protocol-controls), [HAR capture](README.md#har-capture-playwright-session-archive) — JSON default / Zip, [Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco), [Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco))
+- App overview and API: [README.md](README.md) (incl. [HTTP protocol controls](README.md#http-protocol-controls), [HAR capture](README.md#har-capture-playwright-session-archive) — JSON default / Zip, [Failed / incomplete requests](README.md#failed--incomplete-requests), [Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco), [Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco))
 - HAR replay (post-download): [REPLAY_SCRIPT.md](REPLAY_SCRIPT.md)
 - HAR convert zip ↔ embed: [CONVERT_HAR.md](CONVERT_HAR.md)
+- Failed-requests UI plan: [docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md](docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md)
 - HTTP protocol design: [docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md)
 - HAR dual-format design notes: [docs/HAR_ZIP_IMPLEMENT_PLAN.md](docs/HAR_ZIP_IMPLEMENT_PLAN.md)
 - Change history: [CHANGELOG.md](CHANGELOG.md)

@@ -374,6 +374,7 @@ async function runFetchAttempt(
       requestHeaders,
       responseHeaders,
       networkRequests: network.entries,
+      networkFailedRequests: network.failedEntries,
       navigationTiming,
       dnsOverride: opts.dnsOverride,
       ignoreCertErrors: opts.ignoreCertErrors,

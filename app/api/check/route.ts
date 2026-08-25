@@ -32,6 +32,7 @@ function emptyErrorPayload(message: string): CheckResponse {
     requestHeaders: [],
     responseHeaders: [],
     networkRequests: [],
+    networkFailedRequests: [],
     navigationTiming: null,
     dnsOverride: null,
     ignoreCertErrors: false,

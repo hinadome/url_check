@@ -14,7 +14,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 4. [Force DNS resolution](#force-dns-resolution) (includes [HTTP protocol controls](#http-protocol-controls))
 5. [How content is stored](#how-content-is-stored) — backend vs browser; theme `localStorage`; ephemeral HAR temp
 6. [User interface](#user-interface) (includes [Resource summary vs Network requests](#resource-summary-vs-network-requests), [Plain text and non-HTML responses](#plain-text-and-non-html-responses))
-7. [Network requests panel](#network-requests-panel) (includes [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only), [Timing tab](#timing-tab-network-rows-only) / [Resource timing](#resource-timing) / [Navigation timing](#navigation-timing))
+7. [Network requests panel](#network-requests-panel) (includes [Failed / incomplete requests](#failed--incomplete-requests), [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only), [Timing tab](#timing-tab-network-rows-only) / [Resource timing](#resource-timing) / [Navigation timing](#navigation-timing))
 8. [Export](#export) (includes [HAR capture](#har-capture-playwright-session-archive) / [Capture HAR hang on heavy sites](#capture-har-hang-on-heavy-sites-e-g-costco))
 9. [Deployment (Vercel / Netlify)](#deployment-vercel--netlify) — prefer VM/container ([re-runnable `deploy-vm.sh`](#vm-deploy-recommended-for-playwright)); details: [DEPLOYMENT.md](DEPLOYMENT.md)
 10. [API reference](#api-reference)
@@ -64,6 +64,7 @@ Typical uses:
 | Resource summary | Links, images, stylesheets, scripts, iframes, other URLs from the live DOM |
 | Full content | Screenshot, sandboxed HTML preview, plain-text HTML source |
 | Network log | Date-stamped, filterable table with Remote IP + HTTP version; expandable rows with Request / Response / Content / Timing tabs |
+| Failed requests | Separate panel (when non-empty) for Playwright `requestfailed` / typical HAR `status: -1`; method + failure text; filters; CSV; cap `MAX_NETWORK_FAILED_ENTRIES` |
 | Export | Client-side downloads: JSON (light/full), PNG, HTML, HAR (when captured), network CSV index |
 
 ---
@@ -297,6 +298,7 @@ Layout (top to bottom after a successful check):
    - **HTML** — sandboxed iframe (`sandbox=""`, `srcDoc`) so scripts do not run in the preview.
    - **Plain text** — serialized document from `page.content()` shown as text in a `<pre>` block (see [Plain text and non-HTML responses](#plain-text-and-non-html-responses)).
 7. **Network requests** — expandable, filterable table; per-row Request / Response / Content tabs (see [Network requests panel](#network-requests-panel)).
+8. **Failed / incomplete requests** — shown only when Playwright `requestfailed` events occurred (see [Failed / incomplete requests](#failed--incomplete-requests)).
 
 ### Plain text and non-HTML responses
 
@@ -353,12 +355,15 @@ Components live under `components/`:
 - `ResourceSummary.tsx` — DOM resource lists
 - `ContentPreview.tsx` — screenshot / HTML / plain text tabs
 - `NetworkRequestsPanel.tsx` — network table (date, remote IP, HTTP version, expand width, filters, per-row Request/Response/Content/Timing tabs)
+- `NetworkFailedRequestsPanel.tsx` — failed / aborted requests (`requestfailed`); hidden when empty
 
 ---
 
 ## Network requests panel
 
 The network log is built from Playwright `response` events during the check (`lib/network-collector.ts`) and rendered by `components/NetworkRequestsPanel.tsx`.
+
+HTTP **4xx/5xx** still appear here (they emit `response`). Requests with **no HTTP response** (HAR often `status: -1`) are listed separately under [Failed / incomplete requests](#failed--incomplete-requests).
 
 ### Columns
 
@@ -552,7 +557,94 @@ Filtering is **client-side only** (no extra API calls). Controls sit above the t
 
 Filters combine with **AND** logic (a row must satisfy every active control).
 
-### API field
+### Failed / incomplete requests
+
+Panel: `components/NetworkFailedRequestsPanel.tsx`  
+API field: `networkFailedRequests`  
+Collector: Playwright **`page.on("requestfailed")`** in [`lib/network-collector.ts`](lib/network-collector.ts)
+
+These are requests that **never received an HTTP response** (browser/network layer failure). They often appear in Capture HAR with `response.status: -1`. They are **not** merged into the main Network requests table.
+
+#### Included (shown in this panel)
+
+| Included | Source / notes |
+|----------|----------------|
+| Playwright `requestfailed` events | DNS failure, TLS errors, connection refused/reset, aborted requests, many `net::ERR_*` cases |
+| Method, URL, host, resource type | From the failed `Request` |
+| Status | Always recorded as **`-1`** (no HTTP status) |
+| Failure text | `request.failure()?.errorText` (e.g. `net::ERR_NAME_NOT_RESOLVED`) |
+| Request headers | From `request.headers()` at failure time |
+| Date | ISO timestamp when the failure was observed |
+
+#### Excluded (not in this panel)
+
+| Excluded | Where it goes instead / why |
+|----------|------------------------------|
+| HTTP **4xx / 5xx** (and any other status with a response) | **Network requests** — Playwright still emits `response` |
+| Successful responses (2xx / 3xx, etc.) | **Network requests** |
+| Incomplete-at-flush | **Not collected** — request started but neither `response` nor `requestfailed` before the check ended (e.g. still in flight when flush/context close runs). May still appear in HAR as `status: -1`. Deferred; see plan below |
+| Failures after collector flush starts | Dropped for UI/API (`accepting = false`); HAR may still record them until context close |
+| Failures beyond the cap | Dropped once `MAX_NETWORK_FAILED_ENTRIES` is reached (see Cap) |
+| Collector internal errors | Silently skipped (same pattern as response collection) |
+| Reconstructing failures from a downloaded HAR | Not done — only live `requestfailed` during the check |
+
+So: **HAR can list more `status: -1` URLs than this panel.** The UI is a `requestfailed` subset, not a 1:1 HAR diff.
+
+#### UI
+
+| Item | Detail |
+|------|--------|
+| When shown | Only if `networkFailedRequests.length > 0` (**hidden when empty**) |
+| Placement | Directly **below** Network requests |
+| Columns | Date, Method, URL, Host, Type, Status (`-1`), Failure |
+| Expand | Failure message + request headers (no Response / Content / Timing tabs) |
+| Filters | URL contains, remote host, type, failure contains (AND); Clear filters; remounts per check |
+| Width | Same expand/collapse width control pattern as Network requests |
+
+#### Cap (`MAX_NETWORK_FAILED_ENTRIES`)
+
+| Item | Detail |
+|------|--------|
+| **Default** | **500** failed rows per check |
+| **Env** | `MAX_NETWORK_FAILED_ENTRIES` on the Node process (`.env`, systemd, Compose) — then **restart** |
+| **Parsing** | Invalid / empty / non-positive → default 500; values clamped to **1…10000** |
+| **Code** | `maxNetworkFailedEntries()` in [`lib/network-collector.ts`](lib/network-collector.ts) |
+| **Behavior when full** | Further `requestfailed` events are ignored for the UI/API (check still succeeds) |
+| **Related** | Successful responses are capped separately at **2000** (`MAX_NETWORK_ENTRIES`, code constant) |
+
+Example:
+
+```bash
+# .env or systemd Environment=
+MAX_NETWORK_FAILED_ENTRIES=1000
+```
+
+#### Export / API shape
+
+| Channel | Behavior |
+|---------|----------|
+| JSON light / full | Includes `networkFailedRequests` (no bodies to strip) |
+| **Export → Download failed network CSV** | Enabled when there is at least one failed row; columns: `date`, `method`, `url`, `host`, `status`, `resourceType`, `failureText`, `requestHeaderCount` |
+| Network CSV (index) | Responses only — does **not** include failed rows |
+
+Example entry:
+
+```json
+{
+  "url": "https://blocked.example/pixel.gif",
+  "host": "blocked.example",
+  "method": "GET",
+  "status": -1,
+  "resourceType": "image",
+  "date": "2026-08-25T15:00:00.123Z",
+  "failureText": "net::ERR_NAME_NOT_RESOLVED",
+  "requestHeaders": [{ "name": "user-agent", "value": "..." }]
+}
+```
+
+Plan / deferred incomplete-at-flush: [`docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md`](docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md).
+
+### API field (Network responses)
 
 Each `networkRequests[]` entry includes:
 
@@ -603,7 +695,8 @@ After a successful check, use **Export** on the meta strip (`components/ExportMe
 | **HTML source** | `.html` | Captured HTML |
 | **HAR JSON** | `.har` | When `harFormat: "json"` — binaries base64-inlined |
 | **HAR zip** | `.har.zip` | When `harFormat: "zip"` — binaries as zip files |
-| **Network CSV (index)** | `.csv` | Metadata rows only: `date`, `url`, `host`, `remoteIp`, `remotePort`, `status`, `httpVersion`, `contentType`, `contentSize`, `resourceType`, `bodyEncoding`, `bodyTruncated`, `requestHeaderCount`, `responseHeaderCount` |
+| **Network CSV (index)** | `.csv` | Metadata rows for **responses** only (`networkRequests`) |
+| **Failed network CSV** | `-network-failed.csv` | `requestfailed` rows when any exist; disabled in the menu when empty |
 
 **Design rule:** CSV is a spreadsheet-friendly **index**. Request/response header maps, body content, and full timing maps live in **JSON** or **HAR** (`.har` / `.har.zip`), not CSV.
 
@@ -843,6 +936,7 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
           }
         }
       ],
+  "networkFailedRequests": [],
   "navigationTiming": {
     "fetchStart": 0.5,
     "domainLookupStart": 1.0,
@@ -890,6 +984,7 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
 | `resources` | Deduplicated absolute URLs from the live DOM |
 | `requestHeaders` / `responseHeaders` | Main navigation headers |
 | `networkRequests` | Observed responses with date, URL, host, remote IP/port, HTTP version, status, content type/size/type, timing, per-entry headers, and `body` / `bodyEncoding` / `bodyTruncated` for the Content tab (capped; see limits) |
+| `networkFailedRequests` | Failed / aborted requests from Playwright `requestfailed` (method, URL, host, type, status `-1`, `failureText`, request headers). Empty array if none. **Not** a full HAR `status: -1` dump — see [Failed / incomplete requests](#failed--incomplete-requests) (included / excluded / cap). Max rows: `MAX_NETWORK_FAILED_ENTRIES` (default 500) |
 | `navigationTiming` | Page `PerformanceNavigationTiming` snapshot, or `null` |
 | `dnsOverride` | Applied force-resolve mapping, or `null` |
 | `ignoreCertErrors` | Whether this check used Playwright `ignoreHTTPSErrors` |
@@ -932,12 +1027,13 @@ url_checker/
 │   ├── ThemeToggle.tsx       # Header theme switch control
 │   ├── TimingWaterfall.tsx   # Resource / Navigation timing waterfall graph
 │   ├── NetworkRequestsPanel.tsx
+│   ├── NetworkFailedRequestsPanel.tsx
 │   ├── ResourceSummary.tsx
 │   └── UrlForm.tsx           # URL, DNS, custom headers, ignore cert, capture HAR
 ├── lib/
 │   ├── export.ts             # Client-side export builders (JSON/PNG/HTML/CSV)
 │   ├── extract-resources.ts  # DOM URL extraction
-│   ├── network-collector.ts  # Playwright response log (IP, HTTP version, timing)
+│   ├── network-collector.ts  # Playwright response + requestfailed log
 │   ├── playwright-fetch.ts   # Browser launch + capture (+ MAP args, navigationTiming)
 │   ├── feature-flags.ts      # ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR / ALLOW_HTTP_PROTOCOL_CONTROLS (default allow)
 │   ├── types.ts              # Shared request/response types
@@ -1021,7 +1117,8 @@ Defined mainly in `lib/playwright-fetch.ts` and related libs:
 | Navigation timeout | 45s | `page.goto` with `waitUntil: "load"` |
 | Network idle budget | 5s | Best-effort settle; timeout ignored |
 | Max HTML chars | 2,000,000 | Truncate oversized serialized HTML |
-| Max network entries | 2,000 | Cap collected responses |
+| Max network entries | 2,000 | Cap collected **responses** (`networkRequests`) |
+| **`MAX_NETWORK_FAILED_ENTRIES`** | **500** (env; clamp 1–10000) | Cap **`requestfailed`** rows (`networkFailedRequests`). Invalid/empty → 500. Excess failures dropped for UI/API; check still succeeds. See [Failed / incomplete requests](#failed--incomplete-requests). |
 | Max network body bytes | 512,000 | Per-response body capture for Content tab (text or base64); truncated beyond this. **Skipped entirely when Capture HAR is on** (bodies live in the HAR) |
 | Network body read timeout | 5,000 ms | Per `response.body()`; prevents hang on streaming/analytics responses |
 | Network collector flush timeout | 15,000 ms | Max wait for in-flight collectors before continuing the check |
@@ -1072,6 +1169,7 @@ This is not a full multi-tenant hardening suite. Do not expose an open instance 
 - HTTP protocol controls only restrict Chromium negotiation via `--disable-http2` / `--disable-quic`; they cannot force HTTP/2 or HTTP/3, and Playwright has no per-request `httpVersion` API (see [HTTP protocol controls](#http-protocol-controls)).
 - No PDF export or editable HTML workspace.
 - Resource summary unique-URL totals are not expected to equal Network request row counts (different sources; see [Resource summary vs Network requests](#resource-summary-vs-network-requests)).
+- **Failed / incomplete requests** only lists Playwright `requestfailed` during the check (capped by `MAX_NETWORK_FAILED_ENTRIES`). It is **not** a full list of HAR `status: -1` entries; incomplete-at-flush and post-flush failures are excluded (see [Failed / incomplete requests](#failed--incomplete-requests)).
 
 ---
 

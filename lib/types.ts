@@ -121,6 +121,25 @@ export type NetworkRequestEntry = {
   bodyTruncated: boolean;
 };
 
+/**
+ * Request that failed without an HTTP response (Playwright `requestfailed`).
+ * Often corresponds to HAR entries with `response.status: -1`.
+ */
+export type NetworkFailedRequestEntry = {
+  url: string;
+  host: string;
+  /** HTTP method (GET, POST, …) */
+  method: string;
+  /** Usually -1 when no HTTP response */
+  status: number;
+  resourceType: string;
+  /** ISO-8601 timestamp when the failure was observed */
+  date: string;
+  /** Playwright `request.failure()?.errorText` (e.g. net::ERR_…) */
+  failureText: string;
+  requestHeaders: HeaderPair[];
+};
+
 export type CheckResponse = {
   finalUrl: string;
   status: number;
@@ -131,6 +150,8 @@ export type CheckResponse = {
   requestHeaders: HeaderPair[];
   responseHeaders: HeaderPair[];
   networkRequests: NetworkRequestEntry[];
+  /** Failed / aborted requests (no HTTP response); empty if none */
+  networkFailedRequests: NetworkFailedRequestEntry[];
   /** Main document Navigation Timing (once per check) */
   navigationTiming: NavigationTimingSnapshot | null;
   dnsOverride: DnsOverride | null;

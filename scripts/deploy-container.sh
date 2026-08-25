@@ -4,15 +4,17 @@
 # Runtime options (Compose environment:, not script flags) — see docker-compose.yml
 # and DEPLOYMENT.md:
 #   ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR / ALLOW_HTTP_PROTOCOL_CONTROLS
+#   MAX_NETWORK_FAILED_ENTRIES (default 500; cap requestfailed UI/API rows)
 #   NODE_OPTIONS (optional heap for large HAR + screenshot JSON)
 #
 # After image rebuild, the app includes:
 #   - Capture HAR: harFormat json (default) or zip; MAX_HAR_BYTES ~45 MB
 #   - Capture HAR hang fix (skip network bodies when HAR on; body/flush timeouts)
+#   - Failed / incomplete requests panel (requestfailed; HAR status -1)
 #   - Headless ERR_HTTP2_PROTOCOL_ERROR mitigation (headed UA / sec-ch-ua)
 #   - HTTP protocol controls (--disable-http2 / --disable-quic)
-# No Compose service changes required for those features. Optional HAR replay:
-# scripts/replay-har.mjs (REPLAY_SCRIPT.md).
+# No Compose service changes required for those features. Optional client-side:
+# scripts/replay-har.mjs (REPLAY_SCRIPT.md), scripts/convert-har.mjs (CONVERT_HAR.md).
 #
 # Usage:
 #   ./scripts/deploy-container.sh           # build + up -d

@@ -1,4 +1,8 @@
-import type { CheckResponse, NetworkRequestEntry } from "./types";
+import type {
+  CheckResponse,
+  NetworkFailedRequestEntry,
+  NetworkRequestEntry,
+} from "./types";
 
 function sanitizeFilenamePart(value: string): string {
   return value
@@ -52,6 +56,7 @@ export function toLightResult(result: CheckResponse): CheckResponse {
       bodyEncoding: "empty",
       bodyTruncated: false,
     })),
+    networkFailedRequests: result.networkFailedRequests ?? [],
   };
 }
 
@@ -173,6 +178,42 @@ export function exportNetworkCsv(result: CheckResponse): void {
   const csv = `\uFEFF${[header.join(","), ...rows].join("\n")}\n`;
   downloadBlob(
     `${exportBasename(result)}-network.csv`,
+    new Blob([csv], { type: "text/csv;charset=utf-8" }),
+  );
+}
+
+/** Metadata CSV for failed / aborted requests (requestfailed). */
+export function exportNetworkFailedCsv(result: CheckResponse): void {
+  const header = [
+    "date",
+    "method",
+    "url",
+    "host",
+    "status",
+    "resourceType",
+    "failureText",
+    "requestHeaderCount",
+  ];
+
+  const rows = (result.networkFailedRequests ?? []).map(
+    (entry: NetworkFailedRequestEntry) =>
+      [
+        entry.date,
+        entry.method,
+        entry.url,
+        entry.host,
+        entry.status,
+        entry.resourceType,
+        entry.failureText,
+        entry.requestHeaders?.length ?? 0,
+      ]
+        .map(csvEscape)
+        .join(","),
+  );
+
+  const csv = `\uFEFF${[header.join(","), ...rows].join("\n")}\n`;
+  downloadBlob(
+    `${exportBasename(result)}-network-failed.csv`,
     new Blob([csv], { type: "text/csv;charset=utf-8" }),
   );
 }
