@@ -139,6 +139,7 @@ function csvEscape(value: string | number | boolean | null | undefined): string 
 export function exportNetworkCsv(result: CheckResponse): void {
   const header = [
     "date",
+    "method",
     "url",
     "host",
     "remoteIp",
@@ -157,6 +158,7 @@ export function exportNetworkCsv(result: CheckResponse): void {
   const rows = (result.networkRequests ?? []).map((entry: NetworkRequestEntry) =>
     [
       entry.date,
+      entry.method ?? "",
       entry.url,
       entry.host,
       entry.remoteIp ?? "",

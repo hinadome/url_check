@@ -24,12 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Network row **Timing** tab: per-request Resource Timing (`request.timing()` → `timing`) plus page **Navigation Timing** on document rows (`navigationTiming` on the check result).
 - Timing tab **waterfall graph** (`components/TimingWaterfall.tsx`): stacked + per-phase bars for Resource timing; Navigation waterfall on document rows; **Queueing / stalled** segments fill timeline gaps (documented in README).
 - **Date** column on Network requests (`date` ISO timestamp when each response was observed; rows sorted chronologically).
+- Network requests **Method** column (`method` from Playwright `request.method()` on responses; same field on failed rows); included in **network CSV** and **failed network CSV**.
 - Network requests panel **Expand width** / **Collapse width** control for near-full viewport width.
 - Network panel default layout **breaks out** of the main form column (wider than 960px) so the table has room to breathe.
 - Network requests **filter bar** (`components/NetworkRequestsPanel.tsx`):
   - **URL contains** — case-insensitive substring search
   - **Remote host**, **Status**, **Type**, **Content type** — dropdowns populated from the current result set
-  - **Clear filters** when any filter is active
+  - **Clear filters** (always shown; disabled when inactive)
   - Subtitle **Showing N of M responses (filtered)**
   - Empty-filter message when nothing matches
   - Filters combine with AND; panel remounts on each new check (`key` on `app/page.tsx`) so controls reset
@@ -43,11 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared **`HeadersTabs`** for Request / Response / Content / Timing (`components/HeadersTabs.tsx`)
 - Main **HTTP headers** panel uses Request / Response only (no Content or Timing tab)
 - **Export** menu on the results meta strip (`components/ExportMenu.tsx`, `lib/export.ts`):
-  - **JSON (light)** — recommended; strips screenshot + network bodies; **keeps** `timing` / `navigationTiming` and other network metadata
+  - **JSON (light)** — recommended; strips screenshot + network bodies; **keeps** `timing` / `navigationTiming` / `networkFailedRequests` and other network metadata
   - **JSON (full)** — complete payload including screenshot, bodies, and all timing fields
   - **Screenshot (PNG)**, **HTML source**
-  - **Network CSV (index)** — metadata columns only (includes remote IP / HTTP version; no header maps, bodies, or full timing maps)
-  - **Failed network CSV** — `requestfailed` / `networkFailedRequests` index when any exist
+  - **Network CSV (index)** — metadata columns including `method`, remote IP / HTTP version; no header maps, bodies, or full timing maps
+  - **Failed network CSV** — `requestfailed` / `networkFailedRequests` index when any exist (`method`, `failureText`, …)
 - Deploy configs for **Vercel** (`vercel.json`) and **Netlify** (`netlify.toml`) with Next.js native hosting; README documents Playwright serverless limits
 - **VM** and **container** deploy scripts plus [`DEPLOYMENT.md`](DEPLOYMENT.md): `scripts/deploy-vm.sh`, `scripts/deploy-container.sh`, `Dockerfile`, `docker-compose.yml`, `deploy/url-checker.service`, `deploy/nginx-url-checker.conf`
 - GitHub Actions **manual** SSH VM deploy: [`.github/workflows/deploy-vm-ssh.yml`](.github/workflows/deploy-vm-ssh.yml) (`workflow_dispatch` only); optional `VM_APP_URL` secret
@@ -64,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Network / Failed filter bar layout** — replaced rigid 6-column CSS grid with wrapping flex (`network-filter-field--grow` for URL/failure); long host `<select>` options no longer blow out the row; Clear filters stays layout-stable on both panels.
+- **Failed requests URL column** — cells use `network-url` (wrap) instead of bare `col-url`, matching Network requests URL rendering.
 - **Capture HAR on heavy sites (e.g. Costco) appeared to never finish**
   - **Cause:** Network collector called `response.body()` for every response and `flush()` awaited all of them. Costco/Akamai keeps many long-lived/streaming requests open, so some `body()` calls hang indefinitely — worse when HAR recording is also on (hundreds of resources). The UI waited forever after navigation looked “done.”
   - **Fix:** (1) **5s timeout** per `response.body()` and **15s cap** on collector `flush()`; (2) when **Capture HAR** is on, skip network-panel body capture (`captureBodies: false`) — bodies live in the HAR archive; (3) stop accepting new collector tasks once flush starts. Files: [`lib/network-collector.ts`](lib/network-collector.ts), [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts).
@@ -90,13 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`harFormat`** default is **`json`** (UI + API when omitted); Zip remains an opt-in radio / `"zip"`.
-- **`MAX_HAR_BYTES`** soft HAR archive cap raised to **`45_000_000`** (~45 MB) in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts); docs updated (README, DEPLOYMENT, CHANGELOG Capture HAR note, HAR zip plan).
+- **`harFormat`** default is **`json`** (UI + API when omitted); Zip remains an opt-in radio / `"zip"`. Capture HAR radios ordered **JSON → Zip**.
+- **`MAX_HAR_BYTES`** soft HAR archive cap raised to **`45_000_000`** (~45 MB) in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts); docs updated (README, DEPLOYMENT, HAR zip plan).
 - Form layout: **Force DNS** → **HTTP protocol** (HTTP/1.1 only → Disable HTTP/2 → Disable HTTP/3) → Custom headers → **Ignore certificate errors** / **Capture HAR**; Capture HAR includes **JSON / Zip** format radios (`harFormat`, default **json**).
 - Header viewing UX: replaced side-by-side request/response tables with **Request** / **Response** tabs (full-width table per tab; default Response).
 - Header **name** column sizing tightened (~12rem fixed in network detail) so keys are not far from values on wide panels.
 - Network list uses **`table-layout: fixed`** again; expanded header panels are width-contained (`minmax(0, 1fr)` + overflow) so opening Response headers no longer breaks/widens the list columns above.
-- URL cells wrap with `overflow-wrap`; host and content-type use ellipsis; date and short columns stay nowrap.
+- URL cells wrap with `overflow-wrap`; host and content-type use ellipsis; date, method, and short columns stay nowrap.
 - Horizontal + vertical scroll on the network table wrapper when content overflows.
 - Network requests **URL** column is plain text (not a link); full value still available via `title` on hover.
 - Timing tab **Name** column uses a wider wrapping layout so long labels are fully visible.
@@ -107,15 +110,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- `README.md` — [Failed / incomplete requests](README.md#failed--incomplete-requests): included vs excluded, HAR vs UI gap, `MAX_NETWORK_FAILED_ENTRIES` cap; architecture / HAR dual format; [HTTP protocol controls](README.md#http-protocol-controls); [HAR capture](README.md#har-capture-playwright-session-archive)
-- [`DEPLOYMENT.md`](DEPLOYMENT.md) — feature gates; `MAX_NETWORK_FAILED_ENTRIES`; Failed / incomplete requests ops notes + troubleshooting (HAR `-1` vs UI); HAR formats; hang fix / headless HTTP/2; re-run notes
-- [`docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md`](docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md) — failed-requests UI design (implemented; incomplete-at-flush deferred)
-- [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md) — Chromium `--disable-http2` / `--disable-quic` design (implemented)
-- Deploy script headers: [`scripts/deploy-vm.sh`](scripts/deploy-vm.sh), [`scripts/deploy-container.sh`](scripts/deploy-container.sh) — HAR json/zip, failed-requests cap, hang fix, headless HTTP/2, feature gates
-- [`deploy/url-checker.service`](deploy/url-checker.service) — commented `MAX_NETWORK_FAILED_ENTRIES` / `ALLOW_*` examples
-- [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) — HAR replay CLI (`scripts/replay-har.mjs`), DevTools exports, offline verification, progressive screenshots
-- [`CONVERT_HAR.md`](CONVERT_HAR.md) — attach `.har.zip` ↔ embed `.har` converter (`scripts/convert-har.mjs`)
-- `README.md` — [Screenshot timing](README.md#screenshot-timing) documents when the full-page PNG is captured in the Playwright flow.
+- `README.md` — [Network requests](README.md#network-requests-panel) (Method column); [Failed / incomplete requests](README.md#failed--incomplete-requests) (included vs excluded, HAR vs UI gap, `MAX_NETWORK_FAILED_ENTRIES`); [HAR capture](README.md#har-capture-playwright-session-archive); [HTTP protocol controls](README.md#http-protocol-controls) / Headless HTTP/2; [Screenshot timing](README.md#screenshot-timing)
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) — feature gates; `MAX_NETWORK_FAILED_ENTRIES`; Failed / incomplete + Network Method ops notes; HAR formats; hang fix / headless HTTP/2; re-run + troubleshooting; Related links
+- [`docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md`](docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md) — failed-requests UI (implemented; incomplete-at-flush deferred)
+- [`docs/HAR_ZIP_TO_EMBED_CONVERT_PLAN.md`](docs/HAR_ZIP_TO_EMBED_CONVERT_PLAN.md) — zip ↔ embed converter (implemented)
+- [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md) — Chromium `--disable-http2` / `--disable-quic` (implemented)
+- [`docs/HAR_ZIP_IMPLEMENT_PLAN.md`](docs/HAR_ZIP_IMPLEMENT_PLAN.md) — attach/embed HAR recording notes
+- Deploy script headers: [`scripts/deploy-vm.sh`](scripts/deploy-vm.sh), [`scripts/deploy-container.sh`](scripts/deploy-container.sh) — HAR json/zip, failed-requests cap, Network Method, hang fix, headless HTTP/2, feature gates
+- [`deploy/url-checker.service`](deploy/url-checker.service) / [`.env.example`](.env.example) / [`docker-compose.yml`](docker-compose.yml) — commented `MAX_NETWORK_FAILED_ENTRIES` / `ALLOW_*`
+- [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) — HAR replay CLI; [`CONVERT_HAR.md`](CONVERT_HAR.md) — zip ↔ embed converter
 
 ---
 

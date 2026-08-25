@@ -4,12 +4,14 @@
 # rewrites the systemd unit, restarts the app, and only touches this app's nginx site.
 #
 # Runtime options (not script flags) — see DEPLOYMENT.md § "App features that affect
-# the host" and README (HTTP protocol / Capture HAR / Failed requests / Headless HTTP/2):
+# the host" and README (HTTP protocol / Capture HAR / Failed requests / Network Method /
+# Headless HTTP/2):
 #   - Capture HAR: harFormat json (default, .har / binaries as base64) or zip
 #     (.har.zip / binaries as files); MAX_HAR_BYTES ~45 MB soft cap
 #   - Heavy-site hang fix: skip network bodies when HAR on; body/flush timeouts
 #   - Failed / incomplete requests UI: Playwright requestfailed (HAR status -1);
 #     cap MAX_NETWORK_FAILED_ENTRIES (default 500, clamp 1–10000)
+#   - Network requests Method column (GET/POST/… on responses + failed rows; CSV)
 #   - Headless ERR_HTTP2_PROTOCOL_ERROR mitigation (headed UA / sec-ch-ua; optional
 #     --disable-http2 retry)
 #   - HTTP protocol UI: --disable-http2 / --disable-quic (ALLOW_HTTP_PROTOCOL_CONTROLS)

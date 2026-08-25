@@ -11,6 +11,7 @@
 #   - Capture HAR: harFormat json (default) or zip; MAX_HAR_BYTES ~45 MB
 #   - Capture HAR hang fix (skip network bodies when HAR on; body/flush timeouts)
 #   - Failed / incomplete requests panel (requestfailed; HAR status -1)
+#   - Network requests Method column (responses + failed rows; CSV)
 #   - Headless ERR_HTTP2_PROTOCOL_ERROR mitigation (headed UA / sec-ch-ua)
 #   - HTTP protocol controls (--disable-http2 / --disable-quic)
 # No Compose service changes required for those features. Optional client-side:

@@ -97,6 +97,8 @@ export type NavigationTimingSnapshot = {
 export type NetworkRequestEntry = {
   url: string;
   host: string;
+  /** HTTP method (GET, POST, …) */
+  method: string;
   status: number;
   contentType: string;
   contentSize: number | null;

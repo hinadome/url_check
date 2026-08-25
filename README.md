@@ -370,6 +370,7 @@ HTTP **4xx/5xx** still appear here (they emit `response`). Requests with **no HT
 | Column | Source | Notes |
 |--------|--------|-------|
 | **Date** | `date` (ISO-8601) | When the response was observed on the server; shown in local time; rows sorted chronologically |
+| **Method** | `method` | HTTP method from Playwright `request.method()` (`GET`, `POST`, …) |
 | **URL** | `url` | Full request URL (plain text, not a link); wraps long paths; `title` has the full value |
 | **Remote host** | `host` | Host portion of the URL |
 | **Remote IP** | `remoteIp` | From Playwright `response.serverAddr()`; `—` if unavailable (`remotePort` is kept in JSON/`title`) |
@@ -652,6 +653,7 @@ Each `networkRequests[]` entry includes:
 {
   "url": "https://example.com/style.css",
   "host": "example.com",
+  "method": "GET",
   "status": 200,
   "contentType": "text/css",
   "contentSize": 4096,
@@ -915,6 +917,7 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
         {
           "url": "https://example.com/",
           "host": "example.com",
+          "method": "GET",
           "status": 200,
           "contentType": "text/html; charset=UTF-8",
           "contentSize": 1256,
@@ -983,7 +986,7 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
 | `screenshotBase64` | Full-page PNG as base64 |
 | `resources` | Deduplicated absolute URLs from the live DOM |
 | `requestHeaders` / `responseHeaders` | Main navigation headers |
-| `networkRequests` | Observed responses with date, URL, host, remote IP/port, HTTP version, status, content type/size/type, timing, per-entry headers, and `body` / `bodyEncoding` / `bodyTruncated` for the Content tab (capped; see limits) |
+| `networkRequests` | Observed responses with date, method, URL, host, remote IP/port, HTTP version, status, content type/size/type, timing, per-entry headers, and `body` / `bodyEncoding` / `bodyTruncated` for the Content tab (capped; see limits) |
 | `networkFailedRequests` | Failed / aborted requests from Playwright `requestfailed` (method, URL, host, type, status `-1`, `failureText`, request headers). Empty array if none. **Not** a full HAR `status: -1` dump — see [Failed / incomplete requests](#failed--incomplete-requests) (included / excluded / cap). Max rows: `MAX_NETWORK_FAILED_ENTRIES` (default 500) |
 | `navigationTiming` | Page `PerformanceNavigationTiming` snapshot, or `null` |
 | `dnsOverride` | Applied force-resolve mapping, or `null` |

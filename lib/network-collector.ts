@@ -260,6 +260,7 @@ export function attachNetworkCollector(
           const entry: NetworkRequestEntry = {
             url,
             host: hostFromUrl(url),
+            method: request.method(),
             status: response.status(),
             contentType,
             contentSize: captured.contentSize,

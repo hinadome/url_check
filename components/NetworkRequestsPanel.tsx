@@ -13,7 +13,7 @@ type NetworkRequestsPanelProps = {
 };
 
 const ALL = "";
-const DETAIL_COLSPAN = 10;
+const DETAIL_COLSPAN = 11;
 
 function formatBytes(size: number | null): string {
   if (size === null || Number.isNaN(size)) return "—";
@@ -141,7 +141,7 @@ export function NetworkRequestsPanel({
       ) : (
         <>
           <div className="network-filters">
-            <label className="network-filter-field">
+            <label className="network-filter-field network-filter-field--grow">
               <span>URL contains</span>
               <input
                 type="search"
@@ -232,6 +232,9 @@ export function NetworkRequestsPanel({
                     <th scope="col" className="col-date">
                       Date
                     </th>
+                    <th scope="col" className="col-method">
+                      Method
+                    </th>
                     <th scope="col" className="col-url">
                       URL
                     </th>
@@ -291,6 +294,7 @@ export function NetworkRequestsPanel({
                           <td className="network-date" title={req.date}>
                             {formatDate(req.date)}
                           </td>
+                          <td className="network-method">{req.method || "—"}</td>
                           <td className="network-url" title={req.url}>
                             {req.url}
                           </td>

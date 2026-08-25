@@ -110,7 +110,7 @@ export function NetworkFailedRequestsPanel({
       </div>
 
       <div className="network-filters">
-        <label className="network-filter-field">
+        <label className="network-filter-field network-filter-field--grow">
           <span>URL contains</span>
           <input
             type="search"
@@ -148,7 +148,7 @@ export function NetworkFailedRequestsPanel({
             ))}
           </select>
         </label>
-        <label className="network-filter-field">
+        <label className="network-filter-field network-filter-field--grow">
           <span>Failure contains</span>
           <input
             type="search"
@@ -158,17 +158,16 @@ export function NetworkFailedRequestsPanel({
             autoComplete="off"
           />
         </label>
-        {hasActiveFilters && (
-          <div className="network-filter-actions">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={clearFilters}
-            >
-              Clear filters
-            </button>
-          </div>
-        )}
+        <div className="network-filter-actions">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={clearFilters}
+            disabled={!hasActiveFilters}
+          >
+            Clear filters
+          </button>
+        </div>
       </div>
 
       {filtered.length === 0 ? (

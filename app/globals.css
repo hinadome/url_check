@@ -555,10 +555,10 @@ a:hover {
 }
 
 .network-filters {
-  display: grid;
-  grid-template-columns: minmax(12rem, 1.6fr) repeat(4, minmax(8rem, 1fr)) auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.65rem 0.75rem;
-  align-items: end;
+  align-items: flex-end;
   margin: 0.85rem 0 0.75rem;
   padding: 0.75rem 0.85rem;
   border: 1px solid var(--border);
@@ -573,7 +573,13 @@ a:hover {
   font-size: 0.75rem;
   font-weight: 550;
   color: var(--muted);
+  flex: 1 1 9rem;
   min-width: 0;
+  max-width: 100%;
+}
+
+.network-filter-field--grow {
+  flex: 2 1 14rem;
 }
 
 .network-filter-field input,
@@ -587,7 +593,13 @@ a:hover {
   border-radius: 6px;
   background: var(--surface);
   width: 100%;
+  max-width: 100%;
   min-width: 0;
+  box-sizing: border-box;
+}
+
+.network-filter-field select {
+  text-overflow: ellipsis;
 }
 
 .network-filter-field input:focus,
@@ -599,6 +611,7 @@ a:hover {
 .network-filter-actions {
   display: flex;
   align-items: flex-end;
+  flex: 0 0 auto;
 }
 
 .resource-summary h2,
@@ -1307,8 +1320,17 @@ a:hover {
     grid-template-columns: 1fr;
   }
 
-  .network-filters {
-    grid-template-columns: 1fr;
+  .network-filter-field,
+  .network-filter-field--grow {
+    flex: 1 1 100%;
+  }
+
+  .network-filter-actions {
+    width: 100%;
+  }
+
+  .network-filter-actions .btn {
+    width: 100%;
   }
 
   .app-shell {
@@ -1317,11 +1339,15 @@ a:hover {
 }
 
 @media (min-width: 641px) and (max-width: 1100px) {
-  .network-filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .network-filter-field {
+    flex: 1 1 calc(50% - 0.4rem);
+  }
+
+  .network-filter-field--grow {
+    flex: 1 1 100%;
   }
 
   .network-filter-actions {
-    grid-column: 1 / -1;
+    margin-left: auto;
   }
 }
