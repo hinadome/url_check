@@ -3,12 +3,15 @@
 #
 # Runtime options (Compose environment:, not script flags) — see docker-compose.yml
 # and DEPLOYMENT.md:
-#   ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR / ALLOW_HTTP_PROTOCOL_CONTROLS
+#   ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR / ALLOW_CAPTURE_NETLOG /
+#     ALLOW_HTTP_PROTOCOL_CONTROLS
 #   MAX_NETWORK_FAILED_ENTRIES (default 500; cap requestfailed UI/API rows)
-#   NODE_OPTIONS (optional heap for large HAR + screenshot JSON)
+#   NODE_OPTIONS (optional heap for large HAR / NetLog + screenshot JSON)
 #
 # After image rebuild, the app includes:
 #   - Capture HAR: harFormat json (default) or zip; MAX_HAR_BYTES ~45 MB
+#   - Capture NetLog: --log-net-log; MAX_NETLOG_BYTES ~45 MB; ALLOW_CAPTURE_NETLOG;
+#     not stored on server (same as HAR); see README NetLog vs Chrome
 #   - Capture HAR hang fix (skip network bodies when HAR on; body/flush timeouts)
 #   - Failed / incomplete requests panel (requestfailed; HAR status -1)
 #   - Network requests Method column (responses + failed rows; CSV)

@@ -12,6 +12,7 @@ Environment=HOSTNAME=__HOST__
 # Optional feature gates (default allow when unset). Disable with 0/false/no/off:
 # Environment=ALLOW_IGNORE_CERT_ERRORS=0
 # Environment=ALLOW_CAPTURE_HAR=0
+# Environment=ALLOW_CAPTURE_NETLOG=0
 # Environment=ALLOW_HTTP_PROTOCOL_CONTROLS=0
 # Cap failed / aborted network rows (requestfailed) per check (default 500):
 # Environment=MAX_NETWORK_FAILED_ENTRIES=500

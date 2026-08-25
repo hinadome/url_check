@@ -4,7 +4,12 @@ import {
   fetchWithPlaywright,
   resolveHttpProtocolOptions,
 } from "@/lib/playwright-fetch";
-import type { CheckRequest, CheckResponse, HarFormat } from "@/lib/types";
+import type {
+  CheckRequest,
+  CheckResponse,
+  HarFormat,
+  NetLogCaptureMode,
+} from "@/lib/types";
 import {
   validateDnsOverride,
   validateHeaders,
@@ -13,6 +18,13 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+function parseNetLogCaptureMode(value: unknown): NetLogCaptureMode {
+  if (value === "includeSensitive" || value === "everything") {
+    return value;
+  }
+  return "default";
+}
 
 function emptyErrorPayload(message: string): CheckResponse {
   return {
@@ -45,6 +57,9 @@ function emptyErrorPayload(message: string): CheckResponse {
     har: null,
     harZipBase64: null,
     harError: null,
+    netLogCaptureMode: null,
+    netLogBase64: null,
+    netLogError: null,
     timingMs: 0,
     error: message,
   };
@@ -88,6 +103,8 @@ export async function POST(request: Request) {
     const wantCaptureHar = body.captureHar === true;
     const harFormat: HarFormat =
       body.harFormat === "zip" ? "zip" : "json";
+    const wantCaptureNetLog = body.captureNetLog === true;
+    const netLogCaptureMode = parseNetLogCaptureMode(body.netLogCaptureMode);
     const protocol = resolveHttpProtocolOptions({
       disableHttp2: body.disableHttp2 === true,
       disableHttp3: body.disableHttp3 === true,
@@ -106,6 +123,11 @@ export async function POST(request: Request) {
         "captureHar is disabled on this server (set ALLOW_CAPTURE_HAR=1 or unset to allow)",
       );
     }
+    if (wantCaptureNetLog && !flags.allowCaptureNetLog) {
+      throw new Error(
+        "captureNetLog is disabled on this server (set ALLOW_CAPTURE_NETLOG=1 or unset to allow)",
+      );
+    }
     if (wantProtocolControls && !flags.allowHttpProtocolControls) {
       throw new Error(
         "HTTP protocol controls are disabled on this server (set ALLOW_HTTP_PROTOCOL_CONTROLS=1 or unset to allow)",
@@ -121,6 +143,8 @@ export async function POST(request: Request) {
       harFormat,
       protocol.disableHttp2,
       protocol.disableHttp3,
+      wantCaptureNetLog,
+      netLogCaptureMode,
     );
     return NextResponse.json(result);
   } catch (err) {

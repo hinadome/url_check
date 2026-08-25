@@ -15,6 +15,17 @@ export type DnsOverride = {
  */
 export type HarFormat = "zip" | "json";
 
+/**
+ * Chromium `--net-log-capture-mode` when `captureNetLog` is true.
+ * - `default` — strip private info (cookies / auth / raw bytes)
+ * - `includeSensitive` — cookies / auth headers
+ * - `everything` — include raw socket bytes (largest / most sensitive)
+ */
+export type NetLogCaptureMode =
+  | "default"
+  | "includeSensitive"
+  | "everything";
+
 export type CheckRequest = {
   url: string;
   headers?: HeaderPair[];
@@ -28,6 +39,16 @@ export type CheckRequest = {
   captureHar?: boolean;
   /** HAR packaging when `captureHar` is true. Default `json`. */
   harFormat?: HarFormat;
+  /**
+   * When true, record Chromium NetLog via `--log-net-log` and return it in the
+   * response (ephemeral; not written to app storage). Default false.
+   */
+  captureNetLog?: boolean;
+  /**
+   * NetLog capture granularity when `captureNetLog` is true. Default `default`
+   * (strip private info). Maps to `--net-log-capture-mode`.
+   */
+  netLogCaptureMode?: NetLogCaptureMode;
   /** Chromium `--disable-http2` for this check. Default false. */
   disableHttp2?: boolean;
   /**
@@ -46,6 +67,7 @@ export type CheckRequest = {
 export type FeatureFlags = {
   allowIgnoreCertErrors: boolean;
   allowCaptureHar: boolean;
+  allowCaptureNetLog: boolean;
   allowHttpProtocolControls: boolean;
 };
 
@@ -190,6 +212,19 @@ export type CheckResponse = {
    * Check results still succeed; only HAR download is unavailable.
    */
   harError: string | null;
+  /** NetLog capture mode used for this check, or null when NetLog was not requested */
+  netLogCaptureMode: NetLogCaptureMode | null;
+  /**
+   * Chromium NetLog JSON as base64 when `captureNetLog` succeeded within the
+   * soft byte limit; otherwise null. Decode and save as `.json` for
+   * https://netlog-viewer.appspot.com/
+   */
+  netLogBase64: string | null;
+  /**
+   * Set when NetLog was requested but could not be returned (e.g. over size).
+   * Check results still succeed; only NetLog download is unavailable.
+   */
+  netLogError: string | null;
   timingMs: number;
   error?: string;
 };

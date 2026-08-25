@@ -8,6 +8,10 @@
 # Headless HTTP/2):
 #   - Capture HAR: harFormat json (default, .har / binaries as base64) or zip
 #     (.har.zip / binaries as files); MAX_HAR_BYTES ~45 MB soft cap
+#   - Capture NetLog: --log-net-log → .netlog.json; MAX_NETLOG_BYTES ~45 MB;
+#     modes default / includeSensitive / everything; ALLOW_CAPTURE_NETLOG;
+#     not stored on server (OS temp → response → delete; same as HAR / Export);
+#     same NetLog format as chrome://net-export, not same profile/session
 #   - Heavy-site hang fix: skip network bodies when HAR on; body/flush timeouts
 #   - Failed / incomplete requests UI: Playwright requestfailed (HAR status -1);
 #     cap MAX_NETWORK_FAILED_ENTRIES (default 500, clamp 1–10000)
@@ -16,7 +20,7 @@
 #     --disable-http2 retry)
 #   - HTTP protocol UI: --disable-http2 / --disable-quic (ALLOW_HTTP_PROTOCOL_CONTROLS)
 #   - Feature gates: ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR /
-#     ALLOW_HTTP_PROTOCOL_CONTROLS (default allow when unset)
+#     ALLOW_CAPTURE_NETLOG / ALLOW_HTTP_PROTOCOL_CONTROLS (default allow when unset)
 # Optional client-side: scripts/replay-har.mjs (REPLAY_SCRIPT.md),
 #   scripts/convert-har.mjs (CONVERT_HAR.md).
 #

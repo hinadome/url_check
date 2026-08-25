@@ -1,4 +1,4 @@
-import { chromium, type BrowserContext } from "playwright";
+import { chromium, type Browser, type BrowserContext } from "playwright";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import type {
   HarFormat,
   HeaderPair,
   NavigationTimingSnapshot,
+  NetLogCaptureMode,
 } from "./types";
 
 const NAVIGATION_TIMEOUT_MS = 45_000;
@@ -20,6 +21,12 @@ const MAX_HTML_CHARS = 2_000_000;
  * Over this limit the check still succeeds; HAR is omitted and `harError` is set.
  */
 const MAX_HAR_BYTES = 45_000_000;
+/**
+ * Soft cap for Chromium NetLog JSON file size in bytes.
+ * Over this limit the check still succeeds; NetLog is omitted and `netLogError` is set.
+ * Also passed to Chromium as `--net-log-max-size-mb`.
+ */
+const MAX_NETLOG_BYTES = 45_000_000;
 
 function toHeaderPairs(headers: Record<string, string>): HeaderPair[] {
   return Object.entries(headers)
@@ -42,6 +49,25 @@ function hostResolverArgs(dnsOverride: DnsOverride | null): string[] {
 
   // Chromium: MAP hostname ip — keeps URL/SNI/Host as the hostname while dialing the IP.
   return [`--host-resolver-rules=MAP ${dnsOverride.host} ${dnsOverride.ip}`];
+}
+
+/** Chromium `--log-net-log` / `--net-log-capture-mode` / `--net-log-max-size-mb`. */
+export function netLogLaunchArgs(
+  netLogPath: string,
+  mode: NetLogCaptureMode,
+): string[] {
+  const maxMb = Math.max(1, Math.floor(MAX_NETLOG_BYTES / 1_000_000));
+  const args = [
+    `--log-net-log=${netLogPath}`,
+    `--net-log-max-size-mb=${maxMb}`,
+  ];
+  if (mode === "includeSensitive") {
+    args.push("--net-log-capture-mode=IncludeSensitive");
+  } else if (mode === "everything") {
+    args.push("--net-log-capture-mode=Everything");
+  }
+  // `default` = omit mode flag (Chromium strips private info)
+  return args;
 }
 
 /**
@@ -162,9 +188,9 @@ async function captureNavigationTiming(
   }
 }
 
-async function cleanupHarDir(harDir: string | null): Promise<void> {
-  if (!harDir) return;
-  await rm(harDir, { recursive: true, force: true }).catch(() => undefined);
+async function cleanupTempDir(dir: string | null): Promise<void> {
+  if (!dir) return;
+  await rm(dir, { recursive: true, force: true }).catch(() => undefined);
 }
 
 /** Costco/Akamai and similar sites may keep navigating after `load`. */
@@ -195,6 +221,8 @@ type FetchAttemptOptions = {
   ignoreCertErrors: boolean;
   captureHar: boolean;
   harFormat: HarFormat;
+  captureNetLog: boolean;
+  netLogCaptureMode: NetLogCaptureMode;
   disableHttp2: boolean;
   disableHttp3: boolean;
   http2FallbackApplied: boolean;
@@ -208,11 +236,26 @@ async function runFetchAttempt(
     disableHttp2: opts.disableHttp2,
     disableHttp3: opts.disableHttp3,
   });
-  const browser = await chromium.launch({
+
+  let netLogDir: string | null = null;
+  let netLogPath: string | null = null;
+  const effectiveNetLogMode: NetLogCaptureMode | null = opts.captureNetLog
+    ? opts.netLogCaptureMode
+    : null;
+
+  if (opts.captureNetLog) {
+    netLogDir = await mkdtemp(join(tmpdir(), "url-checker-netlog-"));
+    netLogPath = join(netLogDir, "session.netlog.json");
+  }
+
+  const browser: Browser = await chromium.launch({
     headless: true,
     args: [
       ...hostResolverArgs(opts.dnsOverride),
       ...protocol.chromiumProtocolArgs,
+      ...(netLogPath && effectiveNetLogMode
+        ? netLogLaunchArgs(netLogPath, effectiveNetLogMode)
+        : []),
     ],
   });
 
@@ -222,6 +265,7 @@ async function runFetchAttempt(
   const effectiveHarFormat: HarFormat | null = opts.captureHar
     ? opts.harFormat
     : null;
+  let browserClosed = false;
 
   try {
     if (opts.captureHar) {
@@ -322,8 +366,11 @@ async function runFetchAttempt(
     const resources = await extractResources(page);
     await network.flush();
 
+    // HAR flushes on context.close(); NetLog flushes on browser.close().
     await context.close();
     context = null;
+    await browser.close();
+    browserClosed = true;
 
     let har: string | null = null;
     let harZipBase64: string | null = null;
@@ -358,9 +405,36 @@ async function runFetchAttempt(
             ? `HAR download unavailable: ${err.message}`
             : "HAR download unavailable: failed to read session archive.";
       } finally {
-        await cleanupHarDir(harDir);
+        await cleanupTempDir(harDir);
         harDir = null;
         harPath = null;
+      }
+    }
+
+    let netLogBase64: string | null = null;
+    let netLogError: string | null = null;
+    if (netLogPath && effectiveNetLogMode) {
+      try {
+        const { size } = await stat(netLogPath);
+        if (size > MAX_NETLOG_BYTES) {
+          netLogError =
+            `NetLog download unavailable: dump is too large ` +
+            `(${size.toLocaleString()} bytes; limit ${MAX_NETLOG_BYTES.toLocaleString()}). ` +
+            `Page results below are still complete.`;
+        } else {
+          const buf = await readFile(netLogPath);
+          netLogBase64 = buf.toString("base64");
+        }
+      } catch (err) {
+        netLogBase64 = null;
+        netLogError =
+          err instanceof Error
+            ? `NetLog download unavailable: ${err.message}`
+            : "NetLog download unavailable: failed to read dump.";
+      } finally {
+        await cleanupTempDir(netLogDir);
+        netLogDir = null;
+        netLogPath = null;
       }
     }
 
@@ -387,14 +461,20 @@ async function runFetchAttempt(
       har,
       harZipBase64,
       harError,
+      netLogCaptureMode: effectiveNetLogMode,
+      netLogBase64,
+      netLogError,
       timingMs: Date.now() - opts.started,
     };
   } finally {
     if (context) {
       await context.close().catch(() => undefined);
     }
-    await cleanupHarDir(harDir);
-    await browser.close();
+    await cleanupTempDir(harDir);
+    await cleanupTempDir(netLogDir);
+    if (!browserClosed) {
+      await browser.close().catch(() => undefined);
+    }
   }
 }
 
@@ -407,6 +487,8 @@ export async function fetchWithPlaywright(
   harFormat: HarFormat = "json",
   disableHttp2 = false,
   disableHttp3 = false,
+  captureNetLog = false,
+  netLogCaptureMode: NetLogCaptureMode = "default",
 ): Promise<CheckResponse> {
   const started = Date.now();
   const base = {
@@ -416,6 +498,8 @@ export async function fetchWithPlaywright(
     ignoreCertErrors,
     captureHar,
     harFormat,
+    captureNetLog,
+    netLogCaptureMode,
     disableHttp3,
     started,
   };
@@ -432,6 +516,8 @@ export async function fetchWithPlaywright(
       err instanceof Error &&
       err.message === "HTTP2_FALLBACK_RETRY"
     ) {
+      // Failed attempt's NetLog temp dir is cleaned in runFetchAttempt finally.
+      // Retry uses a fresh NetLog path; only the successful attempt is returned.
       return await runFetchAttempt({
         ...base,
         disableHttp2: true,

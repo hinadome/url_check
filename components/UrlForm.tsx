@@ -7,6 +7,7 @@ import type {
   FeatureFlags,
   HarFormat,
   HeaderPair,
+  NetLogCaptureMode,
 } from "@/lib/types";
 
 export type UrlFormSubmit = {
@@ -16,6 +17,8 @@ export type UrlFormSubmit = {
   ignoreCertErrors: boolean;
   captureHar: boolean;
   harFormat: HarFormat;
+  captureNetLog: boolean;
+  netLogCaptureMode: NetLogCaptureMode;
   disableHttp2: boolean;
   disableHttp3: boolean;
   http11Only: boolean;
@@ -29,6 +32,7 @@ type UrlFormProps = {
 const DEFAULT_FLAGS: FeatureFlags = {
   allowIgnoreCertErrors: true,
   allowCaptureHar: true,
+  allowCaptureNetLog: true,
   allowHttpProtocolControls: true,
 };
 
@@ -40,6 +44,9 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
   const [ignoreCertErrors, setIgnoreCertErrors] = useState(false);
   const [captureHar, setCaptureHar] = useState(false);
   const [harFormat, setHarFormat] = useState<HarFormat>("json");
+  const [captureNetLog, setCaptureNetLog] = useState(false);
+  const [netLogCaptureMode, setNetLogCaptureMode] =
+    useState<NetLogCaptureMode>("default");
   const [disableHttp2, setDisableHttp2] = useState(false);
   const [disableHttp3, setDisableHttp3] = useState(false);
   const [http11Only, setHttp11Only] = useState(false);
@@ -56,6 +63,7 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
         setFlags({
           allowIgnoreCertErrors: data.allowIgnoreCertErrors !== false,
           allowCaptureHar: data.allowCaptureHar !== false,
+          allowCaptureNetLog: data.allowCaptureNetLog !== false,
           allowHttpProtocolControls: data.allowHttpProtocolControls !== false,
         });
       } catch {
@@ -71,6 +79,9 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
     if (!flags.allowIgnoreCertErrors) setIgnoreCertErrors(false);
     if (!flags.allowCaptureHar) {
       setCaptureHar(false);
+    }
+    if (!flags.allowCaptureNetLog) {
+      setCaptureNetLog(false);
     }
     if (!flags.allowHttpProtocolControls) {
       setDisableHttp2(false);
@@ -124,6 +135,7 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
         : undefined;
 
     const wantHar = flags.allowCaptureHar && captureHar;
+    const wantNetLog = flags.allowCaptureNetLog && captureNetLog;
     const wantProtocol = flags.allowHttpProtocolControls;
     onSubmit({
       url: trimmed,
@@ -132,6 +144,8 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
       ignoreCertErrors: flags.allowIgnoreCertErrors && ignoreCertErrors,
       captureHar: wantHar,
       harFormat: wantHar ? harFormat : "json",
+      captureNetLog: wantNetLog,
+      netLogCaptureMode: wantNetLog ? netLogCaptureMode : "default",
       disableHttp2: wantProtocol && disableHttp2,
       disableHttp3: wantProtocol && disableHttp3,
       http11Only: wantProtocol && http11Only,
@@ -309,6 +323,88 @@ export function UrlForm({ onSubmit, loading }: UrlFormProps) {
                   <span className="muted field-checkbox-hint">
                     {" "}
                     — <code>.har.zip</code>, Playwright <code>content: attach</code>
+                  </span>
+                </span>
+              </label>
+            </fieldset>
+          )}
+        </>
+      )}
+
+      {flags.allowCaptureNetLog && (
+        <>
+          <label className="field-checkbox">
+            <input
+              type="checkbox"
+              checked={captureNetLog}
+              onChange={(e) => setCaptureNetLog(e.target.checked)}
+              disabled={loading}
+            />
+            <span>
+              Capture NetLog
+              <span className="muted field-checkbox-hint">
+                {" "}
+                — Chromium network stack log for{" "}
+                <a
+                  href="https://netlog-viewer.appspot.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  NetLog Viewer
+                </a>{" "}
+                (not stored on the server)
+              </span>
+            </span>
+          </label>
+
+          {captureNetLog && (
+            <fieldset className="har-format" disabled={loading}>
+              <legend>NetLog capture mode</legend>
+              <label className="field-radio">
+                <input
+                  type="radio"
+                  name="netLogCaptureMode"
+                  value="default"
+                  checked={netLogCaptureMode === "default"}
+                  onChange={() => setNetLogCaptureMode("default")}
+                />
+                <span>
+                  Strip private
+                  <span className="muted field-checkbox-hint">
+                    {" "}
+                    — default; omit cookies / auth / raw bytes
+                  </span>
+                </span>
+              </label>
+              <label className="field-radio">
+                <input
+                  type="radio"
+                  name="netLogCaptureMode"
+                  value="includeSensitive"
+                  checked={netLogCaptureMode === "includeSensitive"}
+                  onChange={() => setNetLogCaptureMode("includeSensitive")}
+                />
+                <span>
+                  Include sensitive
+                  <span className="muted field-checkbox-hint">
+                    {" "}
+                    — cookies / auth headers (treat download as secret)
+                  </span>
+                </span>
+              </label>
+              <label className="field-radio">
+                <input
+                  type="radio"
+                  name="netLogCaptureMode"
+                  value="everything"
+                  checked={netLogCaptureMode === "everything"}
+                  onChange={() => setNetLogCaptureMode("everything")}
+                />
+                <span>
+                  Everything (raw bytes)
+                  <span className="muted field-checkbox-hint">
+                    {" "}
+                    — largest / most sensitive; soft size cap still applies
                   </span>
                 </span>
               </label>

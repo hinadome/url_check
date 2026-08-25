@@ -12,10 +12,10 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 2. [Features](#features)
 3. [Architecture](#architecture) (includes [Screenshot timing](#screenshot-timing))
 4. [Force DNS resolution](#force-dns-resolution) (includes [HTTP protocol controls](#http-protocol-controls))
-5. [How content is stored](#how-content-is-stored) — backend vs browser; theme `localStorage`; ephemeral HAR temp
+5. [How content is stored](#how-content-is-stored) — no server persistence; ephemeral HAR / NetLog temp; client-only exports; theme `localStorage`
 6. [User interface](#user-interface) (includes [Resource summary vs Network requests](#resource-summary-vs-network-requests), [Plain text and non-HTML responses](#plain-text-and-non-html-responses))
 7. [Network requests panel](#network-requests-panel) (includes [Failed / incomplete requests](#failed--incomplete-requests), [Headers display](#headers-display-tabs), [Content tab](#content-tab-network-rows-only), [Timing tab](#timing-tab-network-rows-only) / [Resource timing](#resource-timing) / [Navigation timing](#navigation-timing))
-8. [Export](#export) (includes [HAR capture](#har-capture-playwright-session-archive) / [Capture HAR hang on heavy sites](#capture-har-hang-on-heavy-sites-e-g-costco))
+8. [Export](#export) (includes [HAR capture](#har-capture-playwright-session-archive) / [NetLog capture](#netlog-capture-chromium-network-stack-dump) / [NetLog vs Chrome on your machine](#netlog-vs-chrome-on-your-machine-chromenet-export) / [Capture HAR hang on heavy sites](#capture-har-hang-on-heavy-sites-e-g-costco))
 9. [Deployment (Vercel / Netlify)](#deployment-vercel--netlify) — prefer VM/container ([re-runnable `deploy-vm.sh`](#vm-deploy-recommended-for-playwright)); details: [DEPLOYMENT.md](DEPLOYMENT.md)
 10. [API reference](#api-reference)
 11. [Project structure](#project-structure)
@@ -32,12 +32,12 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 
 URL Checker is a single-page tool plus one server API:
 
-1. The user submits a URL, optional custom HTTP headers, an optional DNS override (hostname → IP), optional **HTTP protocol** controls, and optionally **Ignore certificate errors** / **Capture HAR** (with **JSON** or **Zip** format).
+1. The user submits a URL, optional custom HTTP headers, an optional DNS override (hostname → IP), optional **HTTP protocol** controls, and optionally **Ignore certificate errors** / **Capture HAR** / **Capture NetLog**.
 2. The server validates input (including SSRF guards), then launches Playwright Chromium.
 3. If a DNS override is set, Chromium is started with `--host-resolver-rules=MAP <host> <ip>`.
 4. The browser navigates to the URL (`waitUntil: "load"`, plus a short best-effort `networkidle` wait). When ignore-cert is on, the context uses `ignoreHTTPSErrors: true`.
 5. The server collects HTML, a full-page screenshot, main-document headers, DOM resource URLs, and every network response observed during the load.
-6. The UI displays those results. Check payloads are not written to a database or the app directory (see [How content is stored](#how-content-is-stored)).
+6. The UI displays those results. **Nothing is kept on the server** after the response — no database, no app-directory files, no check history. HAR / NetLog use OS temp only during the check, then are deleted; Export downloads are built in the browser only (see [How content is stored](#how-content-is-stored)).
 
 Typical uses:
 
@@ -58,14 +58,15 @@ Typical uses:
 | Ignore cert errors | Optional checkbox (default **off**); Playwright `ignoreHTTPSErrors` for self-signed / expired TLS |
 | HTTP protocol | Optional (below Force DNS): **HTTP/1.1 only**, Disable HTTP/2, Disable HTTP/3 (QUIC) — Chromium launch args (see [HTTP protocol controls](#http-protocol-controls)) |
 | Capture HAR | Optional (default **off**); format radios **JSON** (default, binaries as base64) → **Zip** (binaries as files); Playwright `recordHar` → downloadable `.har` / `.har.zip` (not stored on the server). Soft cap `MAX_HAR_BYTES` (~45 MB) |
-| Status / meta | Final URL, HTTP status, timing, DNS override, TLS ignore / HTTP protocol / HAR download (or HAR size warning) when used |
+| Capture NetLog | Optional (default **off**); Chromium `--log-net-log` → downloadable `.netlog.json` for [NetLog Viewer](https://netlog-viewer.appspot.com/). Modes: strip private (default) / include sensitive / everything. Soft cap `MAX_NETLOG_BYTES` (~45 MB). **Not stored on the server** (same as HAR). Gate: `ALLOW_CAPTURE_NETLOG` |
+| Status / meta | Final URL, HTTP status, timing, DNS override, TLS ignore / HTTP protocol / HAR / NetLog download (or size warnings) when used |
 | Theme | Light / dark mode toggle (persisted in `localStorage`; follows system preference on first visit; no blocking theme `<script>`) |
 | HTTP headers | Main-document request/response headers via **Request** / **Response** tabs |
 | Resource summary | Links, images, stylesheets, scripts, iframes, other URLs from the live DOM |
 | Full content | Screenshot, sandboxed HTML preview, plain-text HTML source |
 | Network log | Date-stamped, filterable table with Remote IP + HTTP version; expandable rows with Request / Response / Content / Timing tabs |
 | Failed requests | Separate panel (when non-empty) for Playwright `requestfailed` / typical HAR `status: -1`; method + failure text; filters; CSV; cap `MAX_NETWORK_FAILED_ENTRIES` |
-| Export | Client-side downloads: JSON (light/full), PNG, HTML, HAR (when captured), network CSV index |
+| Export | Client-side downloads: JSON (light/full), PNG, HTML, HAR / NetLog (when captured), network CSV index |
 
 ---
 
@@ -73,7 +74,7 @@ Typical uses:
 
 ```text
 Browser UI (React)
-    │  POST /api/check  { url, headers?, dnsOverride?, ignoreCertErrors?, disableHttp2?, disableHttp3?, http11Only?, captureHar?, harFormat? }
+    │  POST /api/check  { url, headers?, dnsOverride?, ignoreCertErrors?, disableHttp2?, disableHttp3?, http11Only?, captureHar?, harFormat?, captureNetLog?, netLogCaptureMode? }
     ▼
 Next.js API route (Node.js)
     │  validate URL + headers + DNS override (SSRF guards)
@@ -84,9 +85,10 @@ Playwright Chromium
     │  optional: ignoreHTTPSErrors
     │  optional: headed UA / sec-ch-ua (Costco-class HTTP/2 mitigation)
     │  optional: recordHar — json (default, embed → `har`) or zip (attach → `harZipBase64`)
+    │  optional: --log-net-log → `netLogBase64` (flushed on browser.close)
     │  goto → capture HTML, screenshot, headers, DOM resources, network
     ▼
-JSON response → React state → UI panels (+ client HAR download)
+JSON response → React state → UI panels (+ client HAR / NetLog download)
 ```
 
 ### Request lifecycle
@@ -96,16 +98,16 @@ JSON response → React state → UI panels (+ client HAR download)
    - Allows only `http`/`https`, blocks private/localhost targets, filters unsafe headers.
    - Validates optional `dnsOverride` (public IP; host must match URL hostname).
    - When a valid override is present, **skips Node DNS lookup** for the URL host (traffic will use the forced IP in Chromium).
-3. **Fetch** — `lib/playwright-fetch.ts` launches Chromium per request (with host-resolver args when overriding), applies headed-compatible identity (UA / `sec-ch-ua`) unless overridden by custom headers, applies `extraHTTPHeaders`, sets `ignoreHTTPSErrors` when requested, optionally enables Playwright `recordHar` (`harFormat` **json** default or **zip**), navigates with `waitUntil: "load"`, then optionally waits up to a few seconds for `networkidle` (timeout ignored so busy sites still succeed). May retry once with `--disable-http2` after `ERR_HTTP2_PROTOCOL_ERROR`.
+3. **Fetch** — `lib/playwright-fetch.ts` launches Chromium per request (with host-resolver args when overriding), applies headed-compatible identity (UA / `sec-ch-ua`) unless overridden by custom headers, applies `extraHTTPHeaders`, sets `ignoreHTTPSErrors` when requested, optionally enables Playwright `recordHar` (`harFormat` **json** default or **zip`) and/or Chromium `--log-net-log`, navigates with `waitUntil: "load"`, then optionally waits up to a few seconds for `networkidle` (timeout ignored so busy sites still succeed). May retry once with `--disable-http2` after `ERR_HTTP2_PROTOCOL_ERROR` (NetLog from the **final** attempt only).
 4. **Capture** (in this order, after navigation + settle):
    1. Main document headers via Playwright `allHeaders()`
    2. `finalUrl`, `title`, then HTML via `page.content()`
    3. **Screenshot** via `page.screenshot({ fullPage: true, type: "png" })`
    4. DOM resource extraction (`lib/extract-resources.ts`)
    5. Flush network log (`lib/network-collector.ts`; when Capture HAR is on, body capture is skipped — see [Capture HAR hang](#capture-har-hang-on-heavy-sites-e-g-costco))
-   6. Close browser context (flushes HAR when `captureHar` was set); read archive into `har` or `harZipBase64`, or set `harError` if over `MAX_HAR_BYTES`; delete the temp dir
-5. **Respond** — JSON returned to the client (includes protocol/HAR fields such as `har` / `harZipBase64` / `harError` / `http2FallbackApplied`); nothing is persisted to app storage or a database.
-6. **Render** — Client stores the payload in React state and renders panels; HAR download is client-side only when `har` or `harZipBase64` is present.
+   6. Close browser **context** (flushes HAR); close **browser** (flushes NetLog); read into `har` / `harZipBase64` / `netLogBase64`, or set `harError` / `netLogError` if over soft limits; delete temp dirs
+5. **Respond** — JSON returned to the client (includes protocol / HAR / NetLog fields); nothing is persisted to app storage or a database.
+6. **Render** — Client stores the payload in React state and renders panels; HAR / NetLog downloads are client-side only when present.
 
 ### Screenshot timing
 
@@ -224,34 +226,47 @@ app/api/check/route.ts      → validateDnsOverride + validateUrl({ skipDnsLooku
 lib/validate.ts             → validateDnsOverride(), validateUrl()
 lib/playwright-fetch.ts     → host-resolver; protocol args; headed UA; recordHar json|zip; HAR hang-aware collector
 lib/network-collector.ts    → body/flush timeouts; captureBodies: false when HAR on
-lib/types.ts                → DnsOverride + protocol flags + captureHar / harFormat / har / harZipBase64 / harError
+lib/types.ts                → DnsOverride + protocol flags + captureHar / harFormat / captureNetLog / netLog* / har*
+lib/feature-flags.ts        → ALLOW_* gates including ALLOW_CAPTURE_NETLOG
+lib/playwright-fetch.ts     → host-resolver; protocol args; headed UA; recordHar; --log-net-log; HAR hang-aware collector
+lib/export.ts               → client downloads including HAR / NetLog
 ```
 
 ---
 
 ## How content is stored
 
-**Verdict:** Almost everything is ephemeral. The only durable client store is the theme preference. The server does **not** keep check history in a database or under the app tree.
+**Verdict:** Almost everything is ephemeral. The only durable client store is the theme preference. The server does **not** keep check history, HAR, NetLog, screenshots, HTML, network logs, or any Export artifact in a database or under the app tree.
 
-### Backend server
+### Backend server — nothing persisted after the check
 
-**Not stored (no DB / no app-disk archive)**  
-No database, Redis, file history, or check log under the project directory.
+**Not stored (no DB / no app-disk archive / no server-side export files)**  
+
+| Artifact | Server persistence? |
+|----------|---------------------|
+| Check results (HTML, screenshot, headers, network rows, failed requests, timing) | **No** — only in the HTTP JSON response, then discarded |
+| HAR (`.har` / `.har.zip`) | **No** — OS temp during the check only, then **deleted**; payload rides in the response as `har` / `harZipBase64` |
+| NetLog (`.netlog.json`) | **No** — same pattern as HAR (`netLogBase64`); OS temp only, then **deleted** |
+| Export downloads (JSON, PNG, HTML, HAR, NetLog, CSV) | **No** — never written on the server; built in the **browser** from React state (`lib/export.ts`) |
+| Check history / multi-user archive | **No** — not implemented |
+
+There is no database, Redis, file history, or check log under the project directory. After `POST /api/check` finishes, the server retains **no** copy of that check’s content.
 
 **Ephemeral only (while a check runs, then discarded)**
 
 | Data | Where | Lifetime |
 |------|--------|----------|
-| Request body (`url`, headers, DNS override, ignore-cert, capture HAR / format) | Process memory in `POST /api/check` | Until the response finishes |
+| Request body (`url`, headers, DNS override, ignore-cert, capture HAR / NetLog / formats) | Process memory in `POST /api/check` | Until the response finishes |
 | Playwright browser + page | Process memory | Closed after each check |
 | Network log, HTML, headers, screenshot buffer, timing | Process memory → JSON response | Same |
-| HAR temp files (`…/url-checker-har-*/session.har` or `.har.zip`) | OS temp via `mkdtemp(os.tmpdir())` in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts) | Created → sized/read into the JSON response → **explicitly deleted** by the app (see below) |
+| HAR temp files (`…/url-checker-har-*/session.har` or `.har.zip`) | OS temp via `mkdtemp(os.tmpdir())` in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts) | Created → sized/read into the JSON response → **explicitly deleted** |
+| NetLog temp files (`…/url-checker-netlog-*/session.netlog.json`) | Same (`mkdtemp` under OS temp) | Created → flushed on `browser.close()` → sized/read into `netLogBase64` → **explicitly deleted** |
 | Feature flags | Read from env at runtime (`ALLOW_*`) | Host config, not per-check data |
 
-**HAR temp cleanup (explicit app action)**  
-The app does **not** rely on OS tmp scrubbing alone. After the HAR file is handled (success, oversize skip, or read error), `cleanupHarDir()` runs `fs.promises.rm(harDir, { recursive: true, force: true })` on the whole `url-checker-har-*` directory. That runs in the HAR block’s `finally`, and again in the outer `finally` if the directory was not cleared yet (e.g. failure before the HAR read).  
+**HAR / NetLog temp cleanup (explicit app action)**  
+The app does **not** rely on OS tmp scrubbing alone. After each archive is handled (success, oversize skip, or read error), `cleanupTempDir()` runs `fs.promises.rm(dir, { recursive: true, force: true })` on the whole `url-checker-har-*` or `url-checker-netlog-*` directory. That runs in each artifact block’s `finally`, and again in the outer `finally` if a directory was not cleared yet (e.g. failure or HTTP/2 retry before read). Soft oversize still deletes the temp files; page results still render.
 
-**Caveat:** if the Node process is killed hard (`kill -9`, OOM killer) before those `finally` blocks run, leftover `/tmp/url-checker-har-*` dirs can remain until manual or OS cleanup. Normal success and handled-error paths always call delete.
+**Caveat:** if the Node process is killed hard (`kill -9`, OOM killer) before those `finally` blocks run, leftover `/tmp/url-checker-har-*` or `/tmp/url-checker-netlog-*` dirs can remain until manual or OS cleanup. Normal success and handled-error paths always call delete.
 
 **Host config (not check data)**  
 Env / systemd / nginx / Let’s Encrypt certificates if you set them up — ops configuration, not URL-check results.
@@ -268,20 +283,20 @@ Env / systemd / nginx / Let’s Encrypt certificates if you set them up — ops 
 
 | Data | Where |
 |------|--------|
-| Form state (URL, headers, DNS, checkboxes, HAR format) | React `useState` in `UrlForm` |
-| Latest check result (HTML, screenshot base64, network rows/bodies, HAR, errors) | React `useState` in `app/page.tsx` |
+| Form state (URL, headers, DNS, checkboxes, HAR / NetLog options) | React `useState` in `UrlForm` |
+| Latest check result (HTML, screenshot base64, network rows/bodies, HAR, NetLog, errors) | React `useState` in `app/page.tsx` |
 | UI chrome (open tabs, filters, export menu) | Component state |
 | Feature flags from `GET /api/config` | Fetched into form state |
 
-**Downloads (user’s machine, not app storage)**  
-Export JSON / PNG / HTML / HAR / CSV — only if the user clicks **Export**; saved by the browser download dialog.
+**Downloads (user’s machine only — not app or server storage)**  
+Export JSON / PNG / HTML / HAR / NetLog / CSV — only if the user clicks **Export** (or a meta download link); saved by the browser download dialog from in-memory result data. The server never writes those files.
 
 ### Implications
 
 - Refreshing the page clears check results (theme preference remains).
 - Concurrent checks do not share stored content on the server.
-- Large pages (HTML + base64 screenshot + network bodies + optional HAR) increase peak RAM for that request and for the browser tab.
-- Capture HAR uses a short-lived OS temp directory that the app **explicitly removes** after read (`cleanupHarDir` in `lib/playwright-fetch.ts`); nothing is kept under the app tree for archives.
+- Large pages (HTML + base64 screenshot + network bodies + optional HAR / NetLog) increase peak RAM for that request and for the browser tab.
+- Capture HAR and Capture NetLog use short-lived OS temp directories that the app **explicitly removes** after read (`cleanupTempDir` in `lib/playwright-fetch.ts`); nothing is kept under the app tree, and nothing is left on the server after a normal response.
 ---
 
 ## User interface
@@ -289,8 +304,8 @@ Export JSON / PNG / HTML / HAR / CSV — only if the user clicks **Export**; sav
 Layout (top to bottom after a successful check):
 
 1. **Header** — product title and **Light / Dark** theme toggle (persisted).
-2. **Form** — URL, optional force DNS (host + IP), optional **HTTP protocol** controls, custom header editor, then **Ignore certificate errors** and **Capture HAR** (default off; when on, **JSON** default or **Zip** format), submit.
-3. **Meta** — status, final URL, timing, DNS override / TLS ignore / HTTP protocol restrictions / HAR download link (or HAR unavailable) when used, and **Export** menu. Oversized HAR shows a warning alert; page results still render.
+2. **Form** — URL, optional force DNS (host + IP), optional **HTTP protocol** controls, custom header editor, then **Ignore certificate errors**, **Capture HAR**, and **Capture NetLog** (defaults off), submit.
+3. **Meta** — status, final URL, timing, DNS override / TLS ignore / HTTP protocol / HAR / NetLog download links (or unavailable warnings) when used, and **Export** menu. Oversized HAR / NetLog shows a warning alert; page results still render.
 4. **HTTP headers** — main-document headers with **Request** / **Response** tabs (full-width table per tab).
 5. **Resource summary** — collapsible lists of URLs found in the rendered DOM.
 6. **Full content**
@@ -687,16 +702,17 @@ Collection is capped (see [Configuration and limits](#configuration-and-limits))
 
 ## Export
 
-After a successful check, use **Export** on the meta strip (`components/ExportMenu.tsx`). Downloads are built in the browser from the current result (`lib/export.ts`) — nothing is written on the server.
+After a successful check, use **Export** on the meta strip (`components/ExportMenu.tsx`). Downloads are built in the browser from the current result (`lib/export.ts`) — **nothing is written on the server** (same rule as HAR / NetLog session capture: no app-directory files, no database, no server-side export store).
 
 | Menu item | File | Contents |
 |-----------|------|----------|
-| **JSON (light)** — recommended | `.json` | Full result shape; `screenshotBase64` cleared; `harZipBase64` cleared; network `body` cleared (`bodyEncoding: "empty"`). **Keeps** headers, resources, HTML, network metadata including `remoteIp` / `httpVersion` / `timing`, top-level `navigationTiming`, and `harError` if set |
-| **JSON (full)** | `.json` | Complete `CheckResponse`: screenshot base64, network bodies, `har` / `harZipBase64` when present, **and** all timing fields |
+| **JSON (light)** — recommended | `.json` | Full result shape; `screenshotBase64` / `har` / `harZipBase64` / `netLogBase64` cleared; network `body` cleared (`bodyEncoding: "empty"`). **Keeps** headers, resources, HTML, network metadata, `harError` / `netLogError` if set |
+| **JSON (full)** | `.json` | Complete `CheckResponse`: screenshot base64, network bodies, `har` / `harZipBase64` / `netLogBase64` when present, **and** all timing fields |
 | **Screenshot (PNG)** | `.png` | Decoded full-page screenshot (disabled if none) |
 | **HTML source** | `.html` | Captured HTML |
 | **HAR JSON** | `.har` | When `harFormat: "json"` — binaries base64-inlined |
 | **HAR zip** | `.har.zip` | When `harFormat: "zip"` — binaries as zip files |
+| **NetLog** | `.netlog.json` | When Capture NetLog succeeded — open in [NetLog Viewer](https://netlog-viewer.appspot.com/) |
 | **Network CSV (index)** | `.csv` | Metadata rows for **responses** only (`networkRequests`) |
 | **Failed network CSV** | `-network-failed.csv` | `requestfailed` rows when any exist; disabled in the menu when empty |
 
@@ -717,12 +733,52 @@ When Capture HAR is on, choose a format (UI order; **JSON** is default):
 
 1. Record into an **OS temp** directory created with `mkdtemp` under `os.tmpdir()` (prefix `url-checker-har-`; not under the app tree).
 2. Close the browser context (flushes Playwright’s HAR recorder), then `stat` / `readFile` the archive into `har` or `harZipBase64` (or set `harError` if oversize/unreadable).
-3. **Explicitly delete** that temp directory via `cleanupHarDir()` → `fs.promises.rm(…, { recursive: true, force: true })` in a `finally` block (also in the outer `finally` as a safety net). Soft oversize still deletes the temp files; page results still render.
-4. Download from meta / **Export** (client-side only).
+3. **Explicitly delete** that temp directory via `cleanupTempDir()` → `fs.promises.rm(…, { recursive: true, force: true })` in a `finally` block (also in the outer `finally` as a safety net). Soft oversize still deletes the temp files; page results still render.
+4. Download from meta / **Export** (client-side only). The server retains **no** HAR after the response (see [How content is stored](#how-content-is-stored)).
 
 Offline: convert between zip and embed with [`scripts/convert-har.mjs`](scripts/convert-har.mjs) — see [`CONVERT_HAR.md`](CONVERT_HAR.md).
 
 Hard process kills may leave orphaned `url-checker-har-*` dirs under OS temp; see [How content is stored](#how-content-is-stored).
+
+### NetLog capture (Chromium network stack dump)
+
+Optional **Capture NetLog** checkbox on the form (next to Capture HAR; per-check default **off**). Admins can disable with `ALLOW_CAPTURE_NETLOG=0` (see [DEPLOYMENT.md](DEPLOYMENT.md#feature-gates-env--default-allow)). Plan: [`docs/NETLOG_CAPTURE_IMPLEMENT_PLAN.md`](docs/NETLOG_CAPTURE_IMPLEMENT_PLAN.md).
+
+Playwright has no NetLog API — capture uses Chromium launch flags:
+
+| Mode (`netLogCaptureMode`) | Chromium | Privacy |
+|----------------------------|----------|---------|
+| **`default`** (UI: Strip private) | `--log-net-log=…` only | Cookies / auth / raw bytes omitted |
+| **`includeSensitive`** | `+ --net-log-capture-mode=IncludeSensitive` | Cookies / auth headers included — treat download as secret |
+| **`everything`** | `+ --net-log-capture-mode=Everything` | Raw socket bytes — largest / most sensitive |
+
+Also passes `--net-log-max-size-mb` derived from `MAX_NETLOG_BYTES` (~45 MB). Soft oversize → `netLogError`; page results still succeed.
+
+**Storage (same as HAR / other exports):** NetLog is **not** stored on the server. OS temp only during the check → bytes in the API response as `netLogBase64` → temp dir deleted. Export / meta download is client-side only. No app-directory files, no database. Details: [How content is stored](#how-content-is-stored).
+
+1. Temp dir `url-checker-netlog-*` under OS temp; file `session.netlog.json`.
+2. **Close browser** (NetLog flushes on process exit — after context close for HAR).
+3. Read into `netLogBase64` or set `netLogError`; **delete** temp dir via `cleanupTempDir()`.
+4. **Export → Download NetLog (.json)** — open in [https://netlog-viewer.appspot.com/](https://netlog-viewer.appspot.com/) (drag-and-drop; processed locally in the browser).
+
+HAR and NetLog are independent; both may be enabled on one check. On HTTP/2 auto-retry, only the **final** attempt’s NetLog is returned. Hard process kills may leave orphaned `url-checker-netlog-*` dirs under OS temp (same caveat as HAR).
+
+#### NetLog vs Chrome on your machine (`chrome://net-export`)
+
+Same **format and Chromium logging stack**, not the same **session**.
+
+| | Chrome on your machine | URL Checker (Playwright) |
+|--|------------------------|---------------------------|
+| **Format / viewer** | Chromium NetLog JSON → [NetLog Viewer](https://netlog-viewer.appspot.com/) | Same |
+| **Mechanism** | `chrome://net-export` “log to disk” (or Chrome `--log-net-log`) | Playwright launch args `--log-net-log` (+ optional `--net-log-capture-mode`) — same NetLog observer family |
+| **Capture modes** | Strip private / Include sensitive / Everything | Same (`default` / `includeSensitive` / `everything`) |
+| **Browser** | Your installed Chrome | Playwright’s **bundled Chromium** (version may differ from your Chrome) |
+| **Profile** | Your cookies, extensions, HSTS, cache, proxy, etc. | Fresh context — **not** your desktop profile |
+| **Scope** | Whatever you do while logging is on | Only that **one check** (navigation + page load resources) |
+| **Client identity** | Normal Chrome | Headless Chromium + headed-compatible UA / `sec-ch-ua` (unless overridden by custom headers) |
+| **Check options** | Whatever your machine uses (VPN, system DNS, …) | Optional DNS override, ignore cert errors, `--disable-http2` / `--disable-quic`, HTTP/2 auto-retry |
+
+**Practical takeaway:** Use URL Checker NetLog for protocol / CDN / TLS / HTTP2–style debugging of the Playwright check; open the download in NetLog Viewer the same way as a desktop export. For “exactly what my logged-in Chrome did with my profile,” capture with `chrome://net-export` on that machine instead — the dumps are comparable, not byte-identical.
 
 #### Capture HAR hang on heavy sites (e.g. Costco)
 
@@ -855,7 +911,7 @@ Hobby plans may also enforce **shorter** function timeouts than 60s — upgrade 
 
 ### `GET /api/config`
 
-Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureHar`). Same values enforced by `POST /api/check`. Defaults are **allow** when the corresponding env vars are unset.
+Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureHar`, `allowCaptureNetLog`, `allowHttpProtocolControls`). Same values enforced by `POST /api/check`. Defaults are **allow** when the corresponding env vars are unset.
 
 ### `POST /api/check`
 
@@ -878,7 +934,9 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
   "disableHttp2": false,
   "disableHttp3": false,
   "http11Only": false,
-  "captureHar": false
+  "captureHar": false,
+  "captureNetLog": false,
+  "netLogCaptureMode": "default"
 }
 ```
 
@@ -893,6 +951,8 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
 | `http11Only` | boolean | No | Preset: expands to both disables (≈ HTTP/1.1 only). Default `false`. Same gate |
 | `captureHar` | boolean | No | When `true`, record Playwright HAR and return `har` or `harZipBase64` per `harFormat`. Rejected with **400** if `ALLOW_CAPTURE_HAR` disabled |
 | `harFormat` | `"json"` \| `"zip"` | No | Packaging when `captureHar` is true. Default **`json`**. `json` = embed / binaries as base64; `zip` = attach / binaries as files |
+| `captureNetLog` | boolean | No | When `true`, record Chromium NetLog (`--log-net-log`) and return `netLogBase64`. Rejected with **400** if `ALLOW_CAPTURE_NETLOG` disabled |
+| `netLogCaptureMode` | `"default"` \| `"includeSensitive"` \| `"everything"` | No | Capture granularity when `captureNetLog` is true. Default **`default`** (strip private) |
 
 #### Success response
 
@@ -973,6 +1033,9 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
   "har": null,
   "harZipBase64": null,
   "harError": null,
+  "netLogCaptureMode": null,
+  "netLogBase64": null,
+  "netLogError": null,
   "timingMs": 2100
 }
 ```
@@ -998,6 +1061,9 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
 | `har` | HAR 1.2 JSON text when `harFormat: "json"` and within limit; otherwise `null` |
 | `harZipBase64` | `.har.zip` as base64 when `harFormat: "zip"` and within limit; otherwise `null` |
 | `harError` | Why HAR download is unavailable (e.g. over `MAX_HAR_BYTES`); check still succeeds |
+| `netLogCaptureMode` | `"default"` \| `"includeSensitive"` \| `"everything"` when NetLog was requested; otherwise `null` |
+| `netLogBase64` | Chromium NetLog JSON as base64 when within `MAX_NETLOG_BYTES`; otherwise `null`. Decode → `.json` for [NetLog Viewer](https://netlog-viewer.appspot.com/) |
+| `netLogError` | Why NetLog download is unavailable; check still succeeds |
 | `timingMs` | Server-side elapsed time for the check |
 | `error` | Present on failure responses |
 
@@ -1038,7 +1104,7 @@ url_checker/
 │   ├── extract-resources.ts  # DOM URL extraction
 │   ├── network-collector.ts  # Playwright response + requestfailed log
 │   ├── playwright-fetch.ts   # Browser launch + capture (+ MAP args, navigationTiming)
-│   ├── feature-flags.ts      # ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR / ALLOW_HTTP_PROTOCOL_CONTROLS (default allow)
+│   ├── feature-flags.ts      # ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR / ALLOW_CAPTURE_NETLOG / ALLOW_HTTP_PROTOCOL_CONTROLS (default allow)
 │   ├── types.ts              # Shared request/response types
 │   └── validate.ts           # URL / header / DNS override guards
 ├── scripts/
@@ -1126,11 +1192,13 @@ Defined mainly in `lib/playwright-fetch.ts` and related libs:
 | Network body read timeout | 5,000 ms | Per `response.body()`; prevents hang on streaming/analytics responses |
 | Network collector flush timeout | 15,000 ms | Max wait for in-flight collectors before continuing the check |
 | **`MAX_HAR_BYTES`** | **45,000,000** (~45 MB) | Soft HAR archive size cap in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Over limit → `har` / `harZipBase64` null + `harError`; **page results still succeed**. See [HAR capture](#har-capture-playwright-session-archive). |
+| **`MAX_NETLOG_BYTES`** | **45,000,000** (~45 MB) | Soft NetLog dump size cap (+ Chromium `--net-log-max-size-mb`). Over limit → `netLogBase64` null + `netLogError`. See [NetLog capture](#netlog-capture-chromium-network-stack-dump). |
 | Content size | Prefer `Content-Length`; else response body length when available | Shown in network table |
 | DNS override | Chromium `--host-resolver-rules=MAP host ip` | Process-wide for that browser instance |
 | API `maxDuration` | 60s | Next.js route limit |
 | `ALLOW_IGNORE_CERT_ERRORS` | allow when unset | Server gate; disable with `0`/`false`/`no`/`off`. See [DEPLOYMENT.md](DEPLOYMENT.md#feature-gates-env--default-allow) |
 | `ALLOW_CAPTURE_HAR` | allow when unset | Same for HAR capture |
+| `ALLOW_CAPTURE_NETLOG` | allow when unset | Same for NetLog capture |
 | `ALLOW_HTTP_PROTOCOL_CONTROLS` | allow when unset | Same for HTTP/2 / HTTP/3 / HTTP/1.1-only controls |
 
 Deploy note: the host must allow launching Chromium (sufficient RAM/CPU; often needs system libraries on Linux). **Vercel/Netlify serverless is a poor fit for Playwright** unless you add a serverless browser strategy — prefer `next start` on a Node server for production checks. See [Deployment](#deployment-vercel--netlify).
@@ -1149,7 +1217,9 @@ Built-in guards (v1):
 - Header name/value length and count limits.
 - Optional DNS override must use a **public** IP and a host that **matches** the URL hostname; Node DNS lookup is skipped only when a valid override is present (prevents using MAP to reach RFC1918 addresses).
 - **Ignore certificate errors** is **off** per check by default; the server **allows** the option when `ALLOW_IGNORE_CERT_ERRORS` is unset. Set `ALLOW_IGNORE_CERT_ERRORS=0` to hide the UI control and reject API requests that ask for it. Enabling ignore only relaxes TLS verification inside Playwright and does not weaken SSRF / private-IP guards.
-- **Capture HAR** is **off** per check by default; the server **allows** the option when `ALLOW_CAPTURE_HAR` is unset. Set `ALLOW_CAPTURE_HAR=0` to disable. When on, default format is **`json`** (optional **`zip`**); HAR is written only to an OS temp path during the check, returned in the API response, then deleted — not stored in the app directory or a database.
+- **Capture HAR** is **off** per check by default; the server **allows** the option when `ALLOW_CAPTURE_HAR` is unset. Set `ALLOW_CAPTURE_HAR=0` to disable. When on, default format is **`json`** (optional **`zip`**); HAR is written only to an OS temp path during the check, returned in the API response, then deleted — **not stored** in the app directory, a database, or any server-side archive (see [How content is stored](#how-content-is-stored)).
+- **Capture NetLog** is **off** per check by default; the server **allows** the option when `ALLOW_CAPTURE_NETLOG` is unset. Set `ALLOW_CAPTURE_NETLOG=0` to disable. Same non-persistence model as HAR (OS temp → response → delete). Modes above **default** may include cookies, auth headers, or raw bytes — treat downloads as secrets.
+- **Export** files (JSON, PNG, HTML, HAR, NetLog, CSV) are built only in the browser; the server never writes them to disk.
 - **HTTP protocol controls** are **off** per check by default; the server **allows** them when `ALLOW_HTTP_PROTOCOL_CONTROLS` is unset. Set `ALLOW_HTTP_PROTOCOL_CONTROLS=0` to disable. Only allowlisted Chromium args (`--disable-http2`, `--disable-quic`) are applied — clients cannot pass arbitrary launch flags.
 - HTML preview uses an empty `sandbox` attribute so scripts do not execute in the UI.
 

@@ -49,7 +49,8 @@ export function toLightResult(result: CheckResponse): CheckResponse {
     screenshotBase64: "",
     har: null,
     harZipBase64: null,
-    // Keep harError / harFormat so light exports still explain HAR outcome
+    netLogBase64: null,
+    // Keep harError / harFormat / netLogError so light exports still explain outcome
     networkRequests: (result.networkRequests ?? []).map((entry) => ({
       ...entry,
       body: "",
@@ -88,6 +89,26 @@ export function exportHar(result: CheckResponse): boolean {
 
 export function hasHarDownload(result: CheckResponse): boolean {
   return Boolean(result.harZipBase64 || result.har);
+}
+
+/** Download Chromium NetLog JSON when present on the result. */
+export function exportNetLog(result: CheckResponse): boolean {
+  if (!result.netLogBase64) return false;
+
+  const binary = atob(result.netLogBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  downloadBlob(
+    `${exportBasename(result)}.netlog.json`,
+    new Blob([bytes], { type: "application/json;charset=utf-8" }),
+  );
+  return true;
+}
+
+export function hasNetLogDownload(result: CheckResponse): boolean {
+  return Boolean(result.netLogBase64);
 }
 
 export function exportJson(

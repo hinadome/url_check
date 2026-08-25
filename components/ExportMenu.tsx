@@ -5,10 +5,12 @@ import {
   exportHar,
   exportHtmlSource,
   exportJson,
+  exportNetLog,
   exportNetworkCsv,
   exportNetworkFailedCsv,
   exportScreenshotPng,
   hasHarDownload,
+  hasNetLogDownload,
 } from "@/lib/export";
 import type { CheckResponse } from "@/lib/types";
 
@@ -22,8 +24,10 @@ export function ExportMenu({ result }: ExportMenuProps) {
   const menuId = useId();
   const hasScreenshot = Boolean(result.screenshotBase64);
   const hasHar = hasHarDownload(result);
+  const hasNetLog = hasNetLogDownload(result);
   const hasFailedNetwork = (result.networkFailedRequests ?? []).length > 0;
   const harError = result.harError ?? null;
+  const netLogError = result.netLogError ?? null;
   const harLabel =
     result.harFormat === "json"
       ? "Download HAR (JSON)"
@@ -36,7 +40,12 @@ export function ExportMenu({ result }: ExportMenuProps) {
       : result.harFormat === "zip"
         ? "Playwright .har.zip — binaries as files"
         : "Playwright session archive";
-
+  const netLogModeHint =
+    result.netLogCaptureMode === "includeSensitive"
+      ? "Include sensitive — cookies/auth"
+      : result.netLogCaptureMode === "everything"
+        ? "Everything — raw bytes (sensitive)"
+        : "Strip private — open in netlog-viewer.appspot.com";
 
   useEffect(() => {
     if (!open) return;
@@ -146,6 +155,28 @@ export function ExportMenu({ result }: ExportMenuProps) {
                 <span className="muted export-menu-item-error">{harError}</span>
               ) : (
                 <span className="muted">Enable “Capture HAR” on the form, then check again</span>
+              )}
+            </button>
+          </li>
+          <li role="none">
+            <button
+              type="button"
+              role="menuitem"
+              className="export-menu-item"
+              disabled={!hasNetLog}
+              onClick={() =>
+                run(() => {
+                  exportNetLog(result);
+                })
+              }
+            >
+              <span>Download NetLog (.json)</span>
+              {hasNetLog ? (
+                <span className="muted">{netLogModeHint}</span>
+              ) : netLogError ? (
+                <span className="muted export-menu-item-error">{netLogError}</span>
+              ) : (
+                <span className="muted">Enable “Capture NetLog” on the form, then check again</span>
               )}
             </button>
           </li>

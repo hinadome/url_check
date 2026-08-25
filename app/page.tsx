@@ -9,7 +9,12 @@ import { NetworkFailedRequestsPanel } from "@/components/NetworkFailedRequestsPa
 import { ResourceSummary } from "@/components/ResourceSummary";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UrlForm, type UrlFormSubmit } from "@/components/UrlForm";
-import { exportHar, hasHarDownload } from "@/lib/export";
+import {
+  exportHar,
+  exportNetLog,
+  hasHarDownload,
+  hasNetLogDownload,
+} from "@/lib/export";
 import type { CheckResponse } from "@/lib/types";
 
 export default function Home() {
@@ -139,6 +144,27 @@ export default function Home() {
                   HAR: <strong>download unavailable</strong>
                 </span>
               )}
+              {hasNetLogDownload(result) && (
+                <span>
+                  NetLog
+                  {result.netLogCaptureMode
+                    ? ` (${result.netLogCaptureMode})`
+                    : ""}
+                  :{" "}
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => exportNetLog(result)}
+                  >
+                    Download NetLog
+                  </button>
+                </span>
+              )}
+              {result.netLogError && !hasNetLogDownload(result) && (
+                <span className="meta-har-error">
+                  NetLog: <strong>download unavailable</strong>
+                </span>
+              )}
             </div>
             <ExportMenu result={result} />
           </div>
@@ -146,6 +172,11 @@ export default function Home() {
           {result.harError && !hasHarDownload(result) && (
             <div className="alert alert-warning" role="status">
               {result.harError}
+            </div>
+          )}
+          {result.netLogError && !hasNetLogDownload(result) && (
+            <div className="alert alert-warning" role="status">
+              {result.netLogError}
             </div>
           )}
 

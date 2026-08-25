@@ -7,6 +7,9 @@ import type { FeatureFlags } from "./types";
  *
  * Enforced in `POST /api/check`. Exposed (non-secret) via `GET /api/config`
  * so the UI can hide checkboxes. Restart the Node process after changing env.
+ *
+ * Gates: ALLOW_IGNORE_CERT_ERRORS, ALLOW_CAPTURE_HAR, ALLOW_CAPTURE_NETLOG,
+ * ALLOW_HTTP_PROTOCOL_CONTROLS.
  */
 
 function envFlagAllowByDefault(name: string): boolean {
@@ -29,6 +32,7 @@ export function getFeatureFlags(): FeatureFlags {
   return {
     allowIgnoreCertErrors: envFlagAllowByDefault("ALLOW_IGNORE_CERT_ERRORS"),
     allowCaptureHar: envFlagAllowByDefault("ALLOW_CAPTURE_HAR"),
+    allowCaptureNetLog: envFlagAllowByDefault("ALLOW_CAPTURE_NETLOG"),
     allowHttpProtocolControls: envFlagAllowByDefault(
       "ALLOW_HTTP_PROTOCOL_CONTROLS",
     ),

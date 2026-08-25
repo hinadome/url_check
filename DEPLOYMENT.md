@@ -30,8 +30,8 @@ Related files:
 - Outbound network for `npm ci` and Playwright browser download (first install)
 - Open TCP port for the app (default **3000**)
 - Enough RAM for Chromium (recommend **≥ 2 GB** free; **4 GB+** preferred under load)
-- Writable OS temp (`os.tmpdir()`, usually `/tmp`) — used only while **Capture HAR** is on, then deleted
-- Extra RAM/headroom if users enable **Capture HAR** (HAR archive returned in the `/api/check` JSON, up to ~45 MB per `MAX_HAR_BYTES`, plus screenshot and network bodies)
+- Writable OS temp (`os.tmpdir()`, usually `/tmp`) — used only while **Capture HAR** and/or **Capture NetLog** are on, then deleted
+- Extra RAM/headroom if users enable **Capture HAR** and/or **Capture NetLog** (archives returned in the `/api/check` JSON, up to ~45 MB each per `MAX_HAR_BYTES` / `MAX_NETLOG_BYTES`, plus screenshot and network bodies)
 
 ---
 
@@ -61,14 +61,15 @@ After `git pull` (or your usual sync), re-run the same script on the VM:
 
 That path is idempotent for updates: stops `url-checker` if running, runs `npm ci` + Playwright Chromium install + `npm run build`, rewrites/restarts the systemd unit, and leaves other nginx sites alone (skips rewriting this app’s site when unchanged; preserves HTTPS site files from `setup-https.sh`).
 
-**Capture HAR / TLS ignore / HTTP protocol / network UI / replay:** no extra deploy script flags. After `git pull` + rebuild, these ship with the app:
+**Capture HAR / NetLog / TLS ignore / HTTP protocol / network UI / replay:** no extra deploy script flags. After `git pull` + rebuild, these ship with the app:
 
 - HAR dual format — UI/API default **`harFormat: "json"`** (embed → `har` / `.har`); optional **`zip`** (attach → `harZipBase64` / `.har.zip`); soft cap **`MAX_HAR_BYTES`** = `45_000_000` (~45 MB)
+- **Capture NetLog** — Chromium `--log-net-log` → `netLogBase64` / `.netlog.json`; modes `default` / `includeSensitive` / `everything`; soft cap **`MAX_NETLOG_BYTES`** (~45 MB); gate **`ALLOW_CAPTURE_NETLOG`**; OS temp only then deleted (same non-persistence as HAR). See [README — NetLog](README.md#netlog-capture-chromium-network-stack-dump) (incl. [vs Chrome on your machine](README.md#netlog-vs-chrome-on-your-machine-chromenet-export))
 - Capture HAR no longer hangs on heavy sites (Costco-class): network collector skips per-response bodies when HAR is on; body/flush timeouts — see [README — Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco)
 - **Failed / incomplete requests** UI: Playwright `requestfailed` (typical HAR `status: -1`) below Network requests; cap **`MAX_NETWORK_FAILED_ENTRIES`** (default **500**, clamp 1–10000) — see [README](README.md#failed--incomplete-requests)
 - Network requests **Method** column (`method` on responses + failed rows; network CSV includes `method`) — see [README — Network requests](README.md#network-requests-panel)
 - Headless `ERR_HTTP2_PROTOCOL_ERROR` mitigation (headed UA / `sec-ch-ua`; optional `--disable-http2` retry) — see [README — Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco)
-- HTTP protocol Chromium args (`--disable-http2` / `--disable-quic`) and feature gates (`ALLOW_IGNORE_CERT_ERRORS`, `ALLOW_CAPTURE_HAR`, `ALLOW_HTTP_PROTOCOL_CONTROLS`)
+- HTTP protocol Chromium args (`--disable-http2` / `--disable-quic`) and feature gates (`ALLOW_IGNORE_CERT_ERRORS`, `ALLOW_CAPTURE_HAR`, `ALLOW_CAPTURE_NETLOG`, `ALLOW_HTTP_PROTOCOL_CONTROLS`)
 
 Set `ALLOW_*` / `MAX_NETWORK_FAILED_ENTRIES` in `.env`, systemd `Environment=`, or Compose and **restart**. Offline HAR tools (not started by deploy): replay — [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) / [`scripts/replay-har.mjs`](scripts/replay-har.mjs); convert zip ↔ embed — [`CONVERT_HAR.md`](CONVERT_HAR.md) / [`scripts/convert-har.mjs`](scripts/convert-har.mjs).
 
@@ -200,6 +201,7 @@ These are **runtime UI/API options**, not extra deploy script flags. After you r
 |----------|---------|---------|
 | `ALLOW_IGNORE_CERT_ERRORS` | allow (unset) | When disabled (`0` / `false` / `no` / `off`), UI hides the checkbox and `POST /api/check` with `ignoreCertErrors: true` returns **400** |
 | `ALLOW_CAPTURE_HAR` | allow (unset) | Same for Capture HAR / `captureHar: true` |
+| `ALLOW_CAPTURE_NETLOG` | allow (unset) | Same for Capture NetLog / `captureNetLog: true` |
 | `ALLOW_HTTP_PROTOCOL_CONTROLS` | allow (unset) | Same for **HTTP/1.1 only** / Disable HTTP/2 / Disable HTTP/3 (`http11Only`, `disableHttp2`, `disableHttp3`) |
 
 Feature gates: [`lib/feature-flags.ts`](lib/feature-flags.ts) + `POST /api/check`. UI reads `GET /api/config`.
@@ -214,7 +216,7 @@ Set on the **running** Node process (`.env`, systemd `Environment=` / comments i
 
 ```bash
 # Public/shared host — lock down feature gates
-ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
+ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_CAPTURE_NETLOG=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
 # Optional: raise failed-request cap
 # MAX_NETWORK_FAILED_ENTRIES=1000
 # then: sudo systemctl restart url-checker
@@ -228,9 +230,11 @@ ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
 | **Failed / incomplete requests** | No deploy flags or packages. Collects Playwright `requestfailed` into `networkFailedRequests`; panel below Network requests (**hidden when empty**). Cap with `MAX_NETWORK_FAILED_ENTRIES` (default 500). **Excluded from UI:** HTTP 4xx/5xx (stay in Network responses); incomplete-at-flush; failures after collector flush; reconstructing from HAR (HAR may show more `status: -1` than the UI). Details: [README](README.md#failed--incomplete-requests). |
 | **Network Method column** | No deploy flags. Response and failed rows include HTTP `method` (`GET`/`POST`/…); network CSV exports `method`. Ships with app rebuild only. See [README — Network requests](README.md#network-requests-panel). |
 | **Capture HAR** | Playwright `recordHar` (`mode: "full"`) writes an ephemeral archive under OS temp (`/tmp/url-checker-har-*`), returns it in the API response, then **deletes** the directory. UI radios (JSON → Zip) / `harFormat` on `POST /api/check`: **`json`** (default, embed → `har` / `.har`) or **`zip`** (attach → `harZipBase64` / `.har.zip`). See format table below. |
+| **Capture NetLog** | Chromium `--log-net-log` under OS temp (`/tmp/url-checker-netlog-*`); returns `netLogBase64` (`.netlog.json` for [NetLog Viewer](https://netlog-viewer.appspot.com/)); soft cap `MAX_NETLOG_BYTES` (~45 MB) + `--net-log-max-size-mb`. Modes: `default` / `includeSensitive` / `everything`. Flushes on **browser close**. Gate: `ALLOW_CAPTURE_NETLOG`. See [README — NetLog](README.md#netlog-capture-chromium-network-stack-dump). |
 | HAR + heavy sites (ops) | When Capture HAR is on, the app **does not** call `response.body()` for the Network Content tab (bodies are in the HAR). Body reads elsewhere are capped (5s each; flush ≤15s) so Costco/Akamai long-lived streams cannot stall the check. Keep `PROXY_READ_TIMEOUT` ≥ ~120s. Details: [README — Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco). |
 | HAR soft limit | `MAX_HAR_BYTES` = `45_000_000` (~45 MB) in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Applies to the **archive file** (zip or embed `.har`). Over that, the **check still succeeds**; `har` / `harZipBase64` are omitted and the UI shows `harError`. Raise the constant and rebuild to change it. |
-| Large JSON | A successful check with HAR can still be tens of MB (large `har` string or `harZipBase64` + screenshot). Network Content bodies are omitted when HAR is on (smaller than duplicating every body in JSON). Failed-request rows are small metadata. nginx streams upstream (`proxy_buffering off`). Watch Node heap, `/tmp`, and proxy timeouts if you raise `MAX_HAR_BYTES`. |
+| NetLog soft limit | `MAX_NETLOG_BYTES` = `45_000_000` (~45 MB). Over that → `netLogError`; page results still succeed. |
+| Large JSON | A successful check with HAR and/or NetLog can be tens of MB (`har` / `harZipBase64` / `netLogBase64` + screenshot). nginx streams upstream (`proxy_buffering off`). Watch Node heap, `/tmp`, and proxy timeouts. |
 | **Replay (offline)** | Not a server feature. After download, replay with [`scripts/replay-har.mjs`](scripts/replay-har.mjs) ([`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md)). Convert zip ↔ embed with [`scripts/convert-har.mjs`](scripts/convert-har.mjs) ([`CONVERT_HAR.md`](CONVERT_HAR.md)). |
 
 **Capture HAR formats**
@@ -240,7 +244,7 @@ ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
 | **`json`** (default) | `content: "embed"` → `session.har` | `har` | `.har` | Base64-inlined in HAR JSON |
 | **`zip`** | `content: "attach"` → `session.har.zip` | `harZipBase64` | `.har.zip` | Raw files inside the zip |
 
-Details: [README — HAR capture](README.md#har-capture-playwright-session-archive) · [Network requests / Method](README.md#network-requests-panel) · [Failed / incomplete requests](README.md#failed--incomplete-requests) · [Capture HAR hang (Costco)](README.md#capture-har-hang-on-heavy-sites-e-g-costco) · [Headless HTTP/2 error](README.md#headless--err_http2_protocol_error-e-g-costco).
+Details: [README — HAR capture](README.md#har-capture-playwright-session-archive) · [NetLog capture](README.md#netlog-capture-chromium-network-stack-dump) · [Network requests / Method](README.md#network-requests-panel) · [Failed / incomplete requests](README.md#failed--incomplete-requests) · [Capture HAR hang (Costco)](README.md#capture-har-hang-on-heavy-sites-e-g-costco) · [Headless HTTP/2 error](README.md#headless--err_http2_protocol_error-e-g-costco).
 
 Skip nginx entirely:
 
@@ -337,8 +341,8 @@ Supporting Compose settings:
 - `shm_size: 1gb` (Chromium needs shared memory)
 - Healthcheck against `/`
 - `restart: unless-stopped`
-- Optional `NODE_OPTIONS` in Compose (commented) if Capture HAR + large pages OOM the Node process
-- After rebuild: Capture HAR hang fix, headless HTTP/2 mitigation, HAR formats (default **json** / optional **zip**, `MAX_HAR_BYTES` ~45 MB), Failed / incomplete requests UI (`MAX_NETWORK_FAILED_ENTRIES`), and Network **Method** column are in the image (no Compose env required beyond optional feature gates / caps)
+- Optional `NODE_OPTIONS` in Compose (commented) if Capture HAR / NetLog + large pages OOM the Node process
+- After rebuild: Capture HAR hang fix, headless HTTP/2 mitigation, HAR formats (default **json** / optional **zip**, `MAX_HAR_BYTES` ~45 MB), **Capture NetLog** (`MAX_NETLOG_BYTES` ~45 MB, `ALLOW_CAPTURE_NETLOG`), Failed / incomplete requests UI (`MAX_NETWORK_FAILED_ENTRIES`), and Network **Method** column are in the image (no Compose env required beyond optional feature gates / caps)
 
 ### Requirements
 
@@ -498,7 +502,7 @@ git checkout <ref>
 ## Security reminders
 
 - Do not expose an open checker to the public internet without auth and rate limits (SSRF risk even with current guards).
-- **Ignore certificate errors**, **HTTP protocol controls**, and **Capture HAR** are off by default per check (when Capture HAR is on, format defaults to **JSON**); HAR is never written into the app directory or a database (OS temp during the check only). Lock down with `ALLOW_IGNORE_CERT_ERRORS=0` / `ALLOW_CAPTURE_HAR=0` / `ALLOW_HTTP_PROTOCOL_CONTROLS=0` on shared hosts (see [Feature gates](#feature-gates-env--default-allow)).
+- **Ignore certificate errors**, **HTTP protocol controls**, **Capture HAR**, and **Capture NetLog** are off by default per check (when Capture HAR is on, format defaults to **JSON**); HAR / NetLog are never written into the app directory or a database (OS temp during the check only). Lock down with `ALLOW_IGNORE_CERT_ERRORS=0` / `ALLOW_CAPTURE_HAR=0` / `ALLOW_CAPTURE_NETLOG=0` / `ALLOW_HTTP_PROTOCOL_CONTROLS=0` on shared hosts (see [Feature gates](#feature-gates-env--default-allow)).
 - VM deploy installs **nginx on port 80** by default and binds the app to localhost; enable TLS with [`scripts/setup-https.sh`](scripts/setup-https.sh) `<domain>` (or a cloud LB) before production use. Re-running deploy does not wipe other nginx sites.
 - Keep Playwright / base image versions updated with dependency upgrades.
 
@@ -506,9 +510,10 @@ git checkout <ref>
 
 ## Related docs
 
-- App overview and API: [README.md](README.md) (incl. [HTTP protocol controls](README.md#http-protocol-controls), [Network requests](README.md#network-requests-panel) / Method column, [HAR capture](README.md#har-capture-playwright-session-archive) — JSON default / Zip, [Failed / incomplete requests](README.md#failed--incomplete-requests), [Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco), [Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco))
+- App overview and API: [README.md](README.md) (incl. [HTTP protocol controls](README.md#http-protocol-controls), [Network requests](README.md#network-requests-panel) / Method column, [HAR capture](README.md#har-capture-playwright-session-archive) — JSON default / Zip, [NetLog capture](README.md#netlog-capture-chromium-network-stack-dump) / [vs Chrome](README.md#netlog-vs-chrome-on-your-machine-chromenet-export), [How content is stored](README.md#how-content-is-stored), [Failed / incomplete requests](README.md#failed--incomplete-requests), [Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco), [Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco))
 - HAR replay (post-download): [REPLAY_SCRIPT.md](REPLAY_SCRIPT.md)
 - HAR convert zip ↔ embed: [CONVERT_HAR.md](CONVERT_HAR.md)
+- NetLog design: [docs/NETLOG_CAPTURE_IMPLEMENT_PLAN.md](docs/NETLOG_CAPTURE_IMPLEMENT_PLAN.md)
 - Failed-requests UI plan: [docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md](docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md)
 - HTTP protocol design: [docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md)
 - HAR dual-format design notes: [docs/HAR_ZIP_IMPLEMENT_PLAN.md](docs/HAR_ZIP_IMPLEMENT_PLAN.md)
