@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { enforceAccessGuards } from "@/lib/access-guard";
 import { getFeatureFlags } from "@/lib/feature-flags";
 import {
   fetchWithPlaywright,
@@ -66,6 +67,9 @@ function emptyErrorPayload(message: string): CheckResponse {
 }
 
 export async function POST(request: Request) {
+  const denied = enforceAccessGuards(request, { rateLimit: true });
+  if (denied) return denied;
+
   let body: CheckRequest;
 
   try {

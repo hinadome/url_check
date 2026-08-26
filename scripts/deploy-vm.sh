@@ -21,6 +21,8 @@
 #   - HTTP protocol UI: --disable-http2 / --disable-quic (ALLOW_HTTP_PROTOCOL_CONTROLS)
 #   - Feature gates: ALLOW_IGNORE_CERT_ERRORS / ALLOW_CAPTURE_HAR /
 #     ALLOW_CAPTURE_NETLOG / ALLOW_HTTP_PROTOCOL_CONTROLS (default allow when unset)
+#   - Access control (opt-in): ENABLE_NETWORK_ACL + NETWORK_ACL_ALLOWLIST (403);
+#     ENABLE_RATE_LIMIT + RATE_LIMIT_* on POST /api/check (429); TRUST_PROXY
 # Optional client-side: scripts/replay-har.mjs (REPLAY_SCRIPT.md),
 #   scripts/convert-har.mjs (CONVERT_HAR.md).
 #

@@ -206,6 +206,32 @@ These are **runtime UI/API options**, not extra deploy script flags. After you r
 
 Feature gates: [`lib/feature-flags.ts`](lib/feature-flags.ts) + `POST /api/check`. UI reads `GET /api/config`.
 
+#### Access control — Network ACL + rate limit (env — default **off**)
+
+Opt-in. Enable with `1` / `true` / `yes` / `on`. Details: [README — Access control](README.md#access-control-acl--rate-limit).
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `ENABLE_NETWORK_ACL` | off | When on, only IPs in `NETWORK_ACL_ALLOWLIST` may access UI/API; others **403** |
+| `NETWORK_ACL_ALLOWLIST` | empty | Comma/space-separated CIDRs or IPs. Empty + ACL on = deny all |
+| `ENABLE_RATE_LIMIT` | off | When on, limit `POST /api/check` per client IP → **429** |
+| `RATE_LIMIT_MAX` | `10` | Max checks per window |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Window length (ms) |
+| `TRUST_PROXY` | on | Trust `X-Real-IP` / `X-Forwarded-For` (required behind nginx) |
+
+```bash
+# Public/shared host — lock down feature gates + optional ACL / rate limit
+ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_CAPTURE_NETLOG=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
+ENABLE_NETWORK_ACL=1
+NETWORK_ACL_ALLOWLIST=203.0.113.0/24,198.51.100.10
+ENABLE_RATE_LIMIT=1
+RATE_LIMIT_MAX=10
+RATE_LIMIT_WINDOW_MS=60000
+# Optional: raise failed-request cap
+# MAX_NETWORK_FAILED_ENTRIES=1000
+# then: sudo systemctl restart url-checker
+```
+
 #### Other runtime env (not feature gates)
 
 | Variable | Default | Meaning |
@@ -213,14 +239,6 @@ Feature gates: [`lib/feature-flags.ts`](lib/feature-flags.ts) + `POST /api/check
 | `MAX_NETWORK_FAILED_ENTRIES` | `500` | Cap Playwright **`requestfailed`** rows in UI/API per check (clamp **1–10000**; invalid → 500). Excess failures dropped; check still succeeds. Not a 1:1 HAR `status: -1` list — see [README — Failed / incomplete requests](README.md#failed--incomplete-requests). |
 
 Set on the **running** Node process (`.env`, systemd `Environment=` / comments in [`deploy/url-checker.service`](deploy/url-checker.service), Compose `environment:`), then **restart** the app. See [`.env.example`](.env.example).
-
-```bash
-# Public/shared host — lock down feature gates
-ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_CAPTURE_NETLOG=0 ALLOW_HTTP_PROTOCOL_CONTROLS=0
-# Optional: raise failed-request cap
-# MAX_NETWORK_FAILED_ENTRIES=1000
-# then: sudo systemctl restart url-checker
-```
 
 | Feature | Deploy / ops impact |
 |---------|---------------------|
@@ -231,6 +249,7 @@ ALLOW_IGNORE_CERT_ERRORS=0 ALLOW_CAPTURE_HAR=0 ALLOW_CAPTURE_NETLOG=0 ALLOW_HTTP
 | **Network Method column** | No deploy flags. Response and failed rows include HTTP `method` (`GET`/`POST`/…); network CSV exports `method`. Ships with app rebuild only. See [README — Network requests](README.md#network-requests-panel). |
 | **Capture HAR** | Playwright `recordHar` (`mode: "full"`) writes an ephemeral archive under OS temp (`/tmp/url-checker-har-*`), returns it in the API response, then **deletes** the directory. UI radios (JSON → Zip) / `harFormat` on `POST /api/check`: **`json`** (default, embed → `har` / `.har`) or **`zip`** (attach → `harZipBase64` / `.har.zip`). See format table below. |
 | **Capture NetLog** | Chromium `--log-net-log` under OS temp (`/tmp/url-checker-netlog-*`); returns `netLogBase64` (`.netlog.json` for [NetLog Viewer](https://netlog-viewer.appspot.com/)); soft cap `MAX_NETLOG_BYTES` (~45 MB) + `--net-log-max-size-mb`. Modes: `default` / `includeSensitive` / `everything`. Flushes on **browser close**. Gate: `ALLOW_CAPTURE_NETLOG`. See [README — NetLog](README.md#netlog-capture-chromium-network-stack-dump). |
+| **Network ACL / rate limit** | Opt-in (`ENABLE_NETWORK_ACL`, `ENABLE_RATE_LIMIT`). ACL **403** for non-allowlisted IPs (UI+API); rate limit **429** on `POST /api/check`. Set allowlist + `TRUST_PROXY` (default on behind nginx). See [README — Access control](README.md#access-control-acl--rate-limit). |
 | HAR + heavy sites (ops) | When Capture HAR is on, the app **does not** call `response.body()` for the Network Content tab (bodies are in the HAR). Body reads elsewhere are capped (5s each; flush ≤15s) so Costco/Akamai long-lived streams cannot stall the check. Keep `PROXY_READ_TIMEOUT` ≥ ~120s. Details: [README — Capture HAR hang](README.md#capture-har-hang-on-heavy-sites-e-g-costco). |
 | HAR soft limit | `MAX_HAR_BYTES` = `45_000_000` (~45 MB) in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts). Applies to the **archive file** (zip or embed `.har`). Over that, the **check still succeeds**; `har` / `harZipBase64` are omitted and the UI shows `harError`. Raise the constant and rebuild to change it. |
 | NetLog soft limit | `MAX_NETLOG_BYTES` = `45_000_000` (~45 MB). Over that → `netLogError`; page results still succeed. |
@@ -501,7 +520,7 @@ git checkout <ref>
 
 ## Security reminders
 
-- Do not expose an open checker to the public internet without auth and rate limits (SSRF risk even with current guards).
+- Do not expose an open checker to the public internet without auth and rate limits (SSRF risk even with current guards). Prefer `ENABLE_NETWORK_ACL` + `ENABLE_RATE_LIMIT` (see [Access control](README.md#access-control-acl--rate-limit)) and/or an external auth proxy.
 - **Ignore certificate errors**, **HTTP protocol controls**, **Capture HAR**, and **Capture NetLog** are off by default per check (when Capture HAR is on, format defaults to **JSON**); HAR / NetLog are never written into the app directory or a database (OS temp during the check only). Lock down with `ALLOW_IGNORE_CERT_ERRORS=0` / `ALLOW_CAPTURE_HAR=0` / `ALLOW_CAPTURE_NETLOG=0` / `ALLOW_HTTP_PROTOCOL_CONTROLS=0` on shared hosts (see [Feature gates](#feature-gates-env--default-allow)).
 - VM deploy installs **nginx on port 80** by default and binds the app to localhost; enable TLS with [`scripts/setup-https.sh`](scripts/setup-https.sh) `<domain>` (or a cloud LB) before production use. Re-running deploy does not wipe other nginx sites.
 - Keep Playwright / base image versions updated with dependency upgrades.

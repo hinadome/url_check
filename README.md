@@ -21,7 +21,7 @@ Optional **force DNS resolution** maps the URL hostname to a specific IP inside 
 11. [Project structure](#project-structure)
 12. [Getting started](#getting-started)
 13. [Configuration and limits](#configuration-and-limits)
-14. [Security](#security)
+14. [Security](#security) (includes [Access control (ACL + rate limit)](#access-control-acl--rate-limit))
 15. [Limitations and out of scope](#limitations-and-out-of-scope)
 16. [Tech stack](#tech-stack)
 17. [Changelog](#changelog)
@@ -1200,6 +1200,12 @@ Defined mainly in `lib/playwright-fetch.ts` and related libs:
 | `ALLOW_CAPTURE_HAR` | allow when unset | Same for HAR capture |
 | `ALLOW_CAPTURE_NETLOG` | allow when unset | Same for NetLog capture |
 | `ALLOW_HTTP_PROTOCOL_CONTROLS` | allow when unset | Same for HTTP/2 / HTTP/3 / HTTP/1.1-only controls |
+| `ENABLE_NETWORK_ACL` | off | Opt-in IP allowlist (**403**). See [Access control](#access-control-acl--rate-limit) |
+| `NETWORK_ACL_ALLOWLIST` | empty | CIDR/IP list when ACL enabled |
+| `ENABLE_RATE_LIMIT` | off | Opt-in limit on `POST /api/check` (**429**) |
+| `RATE_LIMIT_MAX` | `10` | Max checks per IP per window |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Rate-limit window (ms) |
+| `TRUST_PROXY` | on | Trust `X-Real-IP` / `X-Forwarded-For` for client IP |
 
 Deploy note: the host must allow launching Chromium (sufficient RAM/CPU; often needs system libraries on Linux). **Vercel/Netlify serverless is a poor fit for Playwright** unless you add a serverless browser strategy — prefer `next start` on a Node server for production checks. See [Deployment](#deployment-vercel--netlify).
 
@@ -1221,15 +1227,40 @@ Built-in guards (v1):
 - **Capture NetLog** is **off** per check by default; the server **allows** the option when `ALLOW_CAPTURE_NETLOG` is unset. Set `ALLOW_CAPTURE_NETLOG=0` to disable. Same non-persistence model as HAR (OS temp → response → delete). Modes above **default** may include cookies, auth headers, or raw bytes — treat downloads as secrets.
 - **Export** files (JSON, PNG, HTML, HAR, NetLog, CSV) are built only in the browser; the server never writes them to disk.
 - **HTTP protocol controls** are **off** per check by default; the server **allows** them when `ALLOW_HTTP_PROTOCOL_CONTROLS` is unset. Set `ALLOW_HTTP_PROTOCOL_CONTROLS=0` to disable. Only allowlisted Chromium args (`--disable-http2`, `--disable-quic`) are applied — clients cannot pass arbitrary launch flags.
+- **Network ACL** and **rate limiting** are **off** by default (opt-in). Enable with `ENABLE_NETWORK_ACL=1` / `ENABLE_RATE_LIMIT=1` — see [Access control (ACL + rate limit)](#access-control-acl--rate-limit).
 - HTML preview uses an empty `sandbox` attribute so scripts do not execute in the UI.
 
-This is not a full multi-tenant hardening suite. Do not expose an open instance to the public internet without auth, rate limits, and further SSRF review.
+This is not a full multi-tenant hardening suite. Prefer Network ACL + rate limits (and further SSRF/egress controls) before exposing an instance beyond a trusted network.
+
+### Access control (ACL + rate limit)
+
+Opt-in server controls (default **disabled**). Restart the Node process after changing env. Client IP comes from `X-Real-IP` / `X-Forwarded-For` when `TRUST_PROXY` is on (**default on** — matches nginx → app on `127.0.0.1`). Set `TRUST_PROXY=0` only if the app is exposed directly without a reverse proxy.
+
+| Env | Default | Effect |
+|-----|---------|--------|
+| `ENABLE_NETWORK_ACL` | off | When `1`/`true`/`yes`/`on`, only IPs matching `NETWORK_ACL_ALLOWLIST` may use the app (UI + API). Others get **403**. |
+| `NETWORK_ACL_ALLOWLIST` | empty | Comma/space-separated CIDRs or single IPs (IPv4/IPv6), e.g. `203.0.113.0/24,198.51.100.10,2001:db8::/32`. **Empty list while ACL enabled = deny all.** |
+| `ENABLE_RATE_LIMIT` | off | When on, sliding-window limit on **`POST /api/check`** only → **429** + `Retry-After` when exceeded. |
+| `RATE_LIMIT_MAX` | `10` | Max checks per IP per window (clamp 1–10000). |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Window length in ms (min 1000, max 1h). |
+| `TRUST_PROXY` | on | Trust `X-Real-IP` / `X-Forwarded-For` for client IP. |
+
+Implementation: [`middleware.ts`](middleware.ts) (ACL for all routes), [`lib/access-guard.ts`](lib/access-guard.ts) + [`lib/network-acl.ts`](lib/network-acl.ts) + [`lib/rate-limit.ts`](lib/rate-limit.ts) (rate limit on check). In-memory rate limit is **per process** (not shared across replicas; resets on restart).
+
+```bash
+ENABLE_NETWORK_ACL=1
+NETWORK_ACL_ALLOWLIST=203.0.113.0/24,198.51.100.10
+ENABLE_RATE_LIMIT=1
+RATE_LIMIT_MAX=10
+RATE_LIMIT_WINDOW_MS=60000
+# TRUST_PROXY=1   # default
+```
 
 ---
 
 ## Limitations and out of scope
 
-- No authentication, user accounts, or audit log.
+- No authentication / user accounts / audit log (use Network ACL + rate limit and/or an external auth proxy).
 - No persistent check history (results are memory-only; theme preference is the only durable browser store — see [How content is stored](#how-content-is-stored)).
 - One Chromium browser per request (no shared pool).
 - `networkidle` is not required for success (sites with perpetual analytics/websockets would otherwise hang).
