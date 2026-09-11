@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Excluded / deferred:** incomplete-at-flush; failures after collector flush; reconstructing from HAR download (HAR may list more `-1` rows than the UI)
   - Export: JSON keeps the array; **Download failed network CSV** when non-empty
   - Plan: [`docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md`](docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md)
+- **SSRF browser guard** (DNS pin + route abort; default **on**, `ENABLE_SSRF_BROWSER_GUARD=0` to disable):
+  - Shared policy in `lib/ssrf-policy.ts`; validation returns pinned public IP via `validateUrlWithPin`
+  - Chromium `--host-resolver-rules=MAP` for the check hostname; `page.route("**/*")` re-validates every request URL
+  - **`networkSsrfBlockedRequests`** on `CheckResponse`; **SSRF requests** panel below Failed / incomplete requests (hidden when empty)
+  - Echo `dnsPinnedHost` / `dnsPinnedIp` / `ssrfBrowserGuardEnabled`; cap `MAX_SSRF_BLOCKED_ENTRIES` (default 500)
+  - Export: **Download SSRF network CSV** when non-empty
+  - Plan: [`docs/SSRF_BROWSER_GUARD_IMPLEMENT_PLAN.md`](docs/SSRF_BROWSER_GUARD_IMPLEMENT_PLAN.md)
 - Network row **Timing** tab: per-request Resource Timing (`request.timing()` → `timing`) plus page **Navigation Timing** on document rows (`navigationTiming` on the check result).
 - Timing tab **waterfall graph** (`components/TimingWaterfall.tsx`): stacked + per-phase bars for Resource timing; Navigation waterfall on document rows; **Queueing / stalled** segments fill timeline gaps (documented in README).
 - **Date** column on Network requests (`date` ISO timestamp when each response was observed; rows sorted chronologically).

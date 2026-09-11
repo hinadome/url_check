@@ -6,6 +6,7 @@ import { ExportMenu } from "@/components/ExportMenu";
 import { HeadersPanel } from "@/components/HeadersPanel";
 import { NetworkRequestsPanel } from "@/components/NetworkRequestsPanel";
 import { NetworkFailedRequestsPanel } from "@/components/NetworkFailedRequestsPanel";
+import { NetworkSsrfRequestsPanel } from "@/components/NetworkSsrfRequestsPanel";
 import { ResourceSummary } from "@/components/ResourceSummary";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { UrlForm, type UrlFormSubmit } from "@/components/UrlForm";
@@ -200,6 +201,10 @@ export default function Home() {
           <NetworkFailedRequestsPanel
             key={`failed-${result.finalUrl}-${result.timingMs}`}
             requests={result.networkFailedRequests ?? []}
+          />
+          <NetworkSsrfRequestsPanel
+            key={`ssrf-${result.finalUrl}-${result.timingMs}`}
+            requests={result.networkSsrfBlockedRequests ?? []}
           />
         </div>
       )}

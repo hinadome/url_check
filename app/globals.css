@@ -912,6 +912,10 @@ a:hover {
   margin-top: 1.5rem;
 }
 
+.network-ssrf-requests {
+  margin-top: 1.5rem;
+}
+
 .network-toggle-btn {
   padding: 0.2rem 0.45rem;
   min-width: 2rem;

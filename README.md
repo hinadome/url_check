@@ -314,6 +314,7 @@ Layout (top to bottom after a successful check):
    - **Plain text** — serialized document from `page.content()` shown as text in a `<pre>` block (see [Plain text and non-HTML responses](#plain-text-and-non-html-responses)).
 7. **Network requests** — expandable, filterable table; per-row Request / Response / Content tabs (see [Network requests panel](#network-requests-panel)).
 8. **Failed / incomplete requests** — shown only when Playwright `requestfailed` events occurred (see [Failed / incomplete requests](#failed--incomplete-requests)).
+9. **SSRF requests** — shown only when the SSRF browser guard blocked subresources (see [SSRF requests](#ssrf-requests)).
 
 ### Plain text and non-HTML responses
 
@@ -371,6 +372,7 @@ Components live under `components/`:
 - `ContentPreview.tsx` — screenshot / HTML / plain text tabs
 - `NetworkRequestsPanel.tsx` — network table (date, remote IP, HTTP version, expand width, filters, per-row Request/Response/Content/Timing tabs)
 - `NetworkFailedRequestsPanel.tsx` — failed / aborted requests (`requestfailed`); hidden when empty
+- `NetworkSsrfRequestsPanel.tsx` — SSRF-blocked subresources (route abort); hidden when empty
 
 ---
 
@@ -659,6 +661,27 @@ Example entry:
 ```
 
 Plan / deferred incomplete-at-flush: [`docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md`](docs/FAILED_NETWORK_REQUESTS_UI_PLAN.md).
+
+### SSRF requests
+
+Panel: `components/NetworkSsrfRequestsPanel.tsx`  
+API field: `networkSsrfBlockedRequests`  
+Guard: [`lib/ssrf-browser-guard.ts`](lib/ssrf-browser-guard.ts) + shared policy [`lib/ssrf-policy.ts`](lib/ssrf-policy.ts)
+
+Subresources **blocked by the SSRF browser guard** before fetch (Playwright `page.route` → `route.abort("blockedbyclient")`). Separate from **Failed / incomplete requests** (`requestfailed`).
+
+| Item | Detail |
+|------|--------|
+| When shown | Only if `networkSsrfBlockedRequests.length > 0` (**hidden when empty**) |
+| Placement | Directly **below** Failed / incomplete requests |
+| Columns | Date, Method, URL, Host, Type, Block reason |
+| Expand | Block reason + request headers |
+| Cap | `MAX_SSRF_BLOCKED_ENTRIES` (default **500**, clamp 1–10000) |
+| Disable guard | `ENABLE_SSRF_BROWSER_GUARD=0` (default **on** when unset) |
+| DNS pin echo | `dnsPinnedHost` / `dnsPinnedIp` on `CheckResponse` when guard runs |
+| Export | **Download SSRF network CSV** when non-empty |
+
+Plan: [`docs/SSRF_BROWSER_GUARD_IMPLEMENT_PLAN.md`](docs/SSRF_BROWSER_GUARD_IMPLEMENT_PLAN.md).
 
 ### API field (Network responses)
 
@@ -1051,6 +1074,9 @@ Returns server feature gates for the UI (`allowIgnoreCertErrors`, `allowCaptureH
 | `requestHeaders` / `responseHeaders` | Main navigation headers |
 | `networkRequests` | Observed responses with date, method, URL, host, remote IP/port, HTTP version, status, content type/size/type, timing, per-entry headers, and `body` / `bodyEncoding` / `bodyTruncated` for the Content tab (capped; see limits) |
 | `networkFailedRequests` | Failed / aborted requests from Playwright `requestfailed` (method, URL, host, type, status `-1`, `failureText`, request headers). Empty array if none. **Not** a full HAR `status: -1` dump — see [Failed / incomplete requests](#failed--incomplete-requests) (included / excluded / cap). Max rows: `MAX_NETWORK_FAILED_ENTRIES` (default 500) |
+| `networkSsrfBlockedRequests` | Subresources blocked by the SSRF browser guard (route abort before fetch). Empty array if none. Max rows: `MAX_SSRF_BLOCKED_ENTRIES` (default 500). See [SSRF requests](#ssrf-requests). |
+| `dnsPinnedHost` / `dnsPinnedIp` | Hostname and public IP pinned for Chromium when SSRF guard runs; null when guard off or no pin |
+| `ssrfBrowserGuardEnabled` | Whether DNS pin + route abort ran for this check |
 | `navigationTiming` | Page `PerformanceNavigationTiming` snapshot, or `null` |
 | `dnsOverride` | Applied force-resolve mapping, or `null` |
 | `ignoreCertErrors` | Whether this check used Playwright `ignoreHTTPSErrors` |
@@ -1097,6 +1123,7 @@ url_checker/
 │   ├── TimingWaterfall.tsx   # Resource / Navigation timing waterfall graph
 │   ├── NetworkRequestsPanel.tsx
 │   ├── NetworkFailedRequestsPanel.tsx
+│   ├── NetworkSsrfRequestsPanel.tsx
 │   ├── ResourceSummary.tsx
 │   └── UrlForm.tsx           # URL, DNS, custom headers, ignore cert, capture HAR
 ├── lib/
@@ -1188,6 +1215,8 @@ Defined mainly in `lib/playwright-fetch.ts` and related libs:
 | Max HTML chars | 2,000,000 | Truncate oversized serialized HTML |
 | Max network entries | 2,000 | Cap collected **responses** (`networkRequests`) |
 | **`MAX_NETWORK_FAILED_ENTRIES`** | **500** (env; clamp 1–10000) | Cap **`requestfailed`** rows (`networkFailedRequests`). Invalid/empty → 500. Excess failures dropped for UI/API; check still succeeds. See [Failed / incomplete requests](#failed--incomplete-requests). |
+| **`MAX_SSRF_BLOCKED_ENTRIES`** | **500** (env; clamp 1–10000) | Cap SSRF route-abort rows (`networkSsrfBlockedRequests`). |
+| **`ENABLE_SSRF_BROWSER_GUARD`** | **on** | DNS pin + route abort for Chromium. Set `0`/`false`/`off` to disable. |
 | Max network body bytes | 512,000 | Per-response body capture for Content tab (text or base64); truncated beyond this. **Skipped entirely when Capture HAR is on** (bodies live in the HAR) |
 | Network body read timeout | 5,000 ms | Per `response.body()`; prevents hang on streaming/analytics responses |
 | Network collector flush timeout | 15,000 ms | Max wait for in-flight collectors before continuing the check |
@@ -1228,6 +1257,7 @@ Built-in guards (v1):
 - **Export** files (JSON, PNG, HTML, HAR, NetLog, CSV) are built only in the browser; the server never writes them to disk.
 - **HTTP protocol controls** are **off** per check by default; the server **allows** them when `ALLOW_HTTP_PROTOCOL_CONTROLS` is unset. Set `ALLOW_HTTP_PROTOCOL_CONTROLS=0` to disable. Only allowlisted Chromium args (`--disable-http2`, `--disable-quic`) are applied — clients cannot pass arbitrary launch flags.
 - **Network ACL** and **rate limiting** are **off** by default (opt-in). Enable with `ENABLE_NETWORK_ACL=1` / `ENABLE_RATE_LIMIT=1` — see [Access control (ACL + rate limit)](#access-control-acl--rate-limit).
+- **SSRF browser guard** (DNS pin + per-request route abort) is **on** by default. Node validates and pins the check hostname to a public IP (`--host-resolver-rules=MAP`); Chromium re-validates every request URL and aborts unsafe schemes, hostnames, and resolved addresses. Disable with `ENABLE_SSRF_BROWSER_GUARD=0`. Blocked subresources appear in **SSRF requests** (`networkSsrfBlockedRequests`). See [`docs/SSRF_BROWSER_GUARD_IMPLEMENT_PLAN.md`](docs/SSRF_BROWSER_GUARD_IMPLEMENT_PLAN.md).
 - HTML preview uses an empty `sandbox` attribute so scripts do not execute in the UI.
 
 This is not a full multi-tenant hardening suite. Prefer Network ACL + rate limits (and further SSRF/egress controls) before exposing an instance beyond a trusted network.

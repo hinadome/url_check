@@ -16,6 +16,8 @@ Environment=HOSTNAME=__HOST__
 # Environment=ALLOW_HTTP_PROTOCOL_CONTROLS=0
 # Cap failed / aborted network rows (requestfailed) per check (default 500):
 # Environment=MAX_NETWORK_FAILED_ENTRIES=500
+# Environment=MAX_SSRF_BLOCKED_ENTRIES=500
+# Environment=ENABLE_SSRF_BROWSER_GUARD=0
 # Access control (default off) — see README Access control:
 # Environment=ENABLE_NETWORK_ACL=1
 # Environment=NETWORK_ACL_ALLOWLIST=203.0.113.0/24,198.51.100.10

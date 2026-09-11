@@ -4,6 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { extractResources } from "./extract-resources";
 import { attachNetworkCollector } from "./network-collector";
+import {
+  attachSsrfRouteGuard,
+  createSsrfBlockedCollector,
+  hostResolverPinArgs,
+  isSsrfBrowserGuardEnabled,
+} from "./ssrf-browser-guard";
 import type {
   CheckResponse,
   DnsOverride,
@@ -42,13 +48,17 @@ function findHeaderKey(
   return Object.keys(headers).find((k) => k.toLowerCase() === lower);
 }
 
-function hostResolverArgs(dnsOverride: DnsOverride | null): string[] {
-  if (!dnsOverride) {
-    return [];
+function hostResolverArgs(
+  dnsOverride: DnsOverride | null,
+  dnsPin: { host: string; ip: string } | null,
+): string[] {
+  if (dnsOverride) {
+    return [`--host-resolver-rules=MAP ${dnsOverride.host} ${dnsOverride.ip}`];
   }
-
-  // Chromium: MAP hostname ip — keeps URL/SNI/Host as the hostname while dialing the IP.
-  return [`--host-resolver-rules=MAP ${dnsOverride.host} ${dnsOverride.ip}`];
+  if (dnsPin) {
+    return hostResolverPinArgs(dnsPin.host, dnsPin.ip);
+  }
+  return [];
 }
 
 /** Chromium `--log-net-log` / `--net-log-capture-mode` / `--net-log-max-size-mb`. */
@@ -218,6 +228,8 @@ type FetchAttemptOptions = {
   url: string;
   headers: Record<string, string>;
   dnsOverride: DnsOverride | null;
+  dnsPin: { host: string; ip: string } | null;
+  ssrfBrowserGuardEnabled: boolean;
   ignoreCertErrors: boolean;
   captureHar: boolean;
   harFormat: HarFormat;
@@ -251,7 +263,10 @@ async function runFetchAttempt(
   const browser: Browser = await chromium.launch({
     headless: true,
     args: [
-      ...hostResolverArgs(opts.dnsOverride),
+      ...hostResolverArgs(
+        opts.dnsOverride,
+        opts.ssrfBrowserGuardEnabled ? opts.dnsPin : null,
+      ),
       ...protocol.chromiumProtocolArgs,
       ...(netLogPath && effectiveNetLogMode
         ? netLogLaunchArgs(netLogPath, effectiveNetLogMode)
@@ -299,6 +314,10 @@ async function runFetchAttempt(
         : {}),
     });
     const page = await context.newPage();
+    const ssrfCollector = createSsrfBlockedCollector();
+    if (opts.ssrfBrowserGuardEnabled) {
+      await attachSsrfRouteGuard(page, ssrfCollector);
+    }
     // When HAR is on, bodies are in the archive — skip per-response body() so
     // flush cannot hang on Costco/Akamai long-lived streams (ERR hang / never finish).
     const network = attachNetworkCollector(page, {
@@ -365,6 +384,10 @@ async function runFetchAttempt(
     const navigationTiming = await captureNavigationTiming(page);
     const resources = await extractResources(page);
     await network.flush();
+    ssrfCollector.entries.sort((a, b) => {
+      const byDate = a.date.localeCompare(b.date);
+      return byDate !== 0 ? byDate : a.url.localeCompare(b.url);
+    });
 
     // HAR flushes on context.close(); NetLog flushes on browser.close().
     await context.close();
@@ -449,7 +472,13 @@ async function runFetchAttempt(
       responseHeaders,
       networkRequests: network.entries,
       networkFailedRequests: network.failedEntries,
+      networkSsrfBlockedRequests: ssrfCollector.entries,
       navigationTiming,
+      dnsPinnedHost:
+        opts.ssrfBrowserGuardEnabled && opts.dnsPin ? opts.dnsPin.host : null,
+      dnsPinnedIp:
+        opts.ssrfBrowserGuardEnabled && opts.dnsPin ? opts.dnsPin.ip : null,
+      ssrfBrowserGuardEnabled: opts.ssrfBrowserGuardEnabled,
       dnsOverride: opts.dnsOverride,
       ignoreCertErrors: opts.ignoreCertErrors,
       disableHttp2: protocol.disableHttp2,
@@ -489,12 +518,16 @@ export async function fetchWithPlaywright(
   disableHttp3 = false,
   captureNetLog = false,
   netLogCaptureMode: NetLogCaptureMode = "default",
+  dnsPin: { host: string; ip: string } | null = null,
+  ssrfBrowserGuardEnabled = isSsrfBrowserGuardEnabled(),
 ): Promise<CheckResponse> {
   const started = Date.now();
   const base = {
     url,
     headers,
     dnsOverride,
+    dnsPin,
+    ssrfBrowserGuardEnabled,
     ignoreCertErrors,
     captureHar,
     harFormat,

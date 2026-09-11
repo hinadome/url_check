@@ -15,6 +15,9 @@
 #   - Heavy-site hang fix: skip network bodies when HAR on; body/flush timeouts
 #   - Failed / incomplete requests UI: Playwright requestfailed (HAR status -1);
 #     cap MAX_NETWORK_FAILED_ENTRIES (default 500, clamp 1–10000)
+#   - SSRF browser guard: DNS pin + per-request route abort (default on);
+#     SSRF requests panel when blocked; cap MAX_SSRF_BLOCKED_ENTRIES (default 500);
+#     disable with ENABLE_SSRF_BROWSER_GUARD=0
 #   - Network requests Method column (GET/POST/… on responses + failed rows; CSV)
 #   - Headless ERR_HTTP2_PROTOCOL_ERROR mitigation (headed UA / sec-ch-ua; optional
 #     --disable-http2 retry)
@@ -23,6 +26,7 @@
 #     ALLOW_CAPTURE_NETLOG / ALLOW_HTTP_PROTOCOL_CONTROLS (default allow when unset)
 #   - Access control (opt-in): ENABLE_NETWORK_ACL + NETWORK_ACL_ALLOWLIST (403);
 #     ENABLE_RATE_LIMIT + RATE_LIMIT_* on POST /api/check (429); TRUST_PROXY
+#   - SSRF caps / kill switch: MAX_SSRF_BLOCKED_ENTRIES; ENABLE_SSRF_BROWSER_GUARD=0
 # Optional client-side: scripts/replay-har.mjs (REPLAY_SCRIPT.md),
 #   scripts/convert-har.mjs (CONVERT_HAR.md).
 #

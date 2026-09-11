@@ -71,7 +71,7 @@ That path is idempotent for updates: stops `url-checker` if running, runs `npm c
 - Headless `ERR_HTTP2_PROTOCOL_ERROR` mitigation (headed UA / `sec-ch-ua`; optional `--disable-http2` retry) — see [README — Headless HTTP/2](README.md#headless--err_http2_protocol_error-e-g-costco)
 - HTTP protocol Chromium args (`--disable-http2` / `--disable-quic`) and feature gates (`ALLOW_IGNORE_CERT_ERRORS`, `ALLOW_CAPTURE_HAR`, `ALLOW_CAPTURE_NETLOG`, `ALLOW_HTTP_PROTOCOL_CONTROLS`)
 
-Set `ALLOW_*` / `MAX_NETWORK_FAILED_ENTRIES` in `.env`, systemd `Environment=`, or Compose and **restart**. Offline HAR tools (not started by deploy): replay — [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) / [`scripts/replay-har.mjs`](scripts/replay-har.mjs); convert zip ↔ embed — [`CONVERT_HAR.md`](CONVERT_HAR.md) / [`scripts/convert-har.mjs`](scripts/convert-har.mjs).
+Set `ALLOW_*` / `MAX_NETWORK_FAILED_ENTRIES` / `MAX_SSRF_BLOCKED_ENTRIES` / `ENABLE_SSRF_BROWSER_GUARD` in `.env`, systemd `Environment=`, or Compose and **restart**. Offline HAR tools (not started by deploy): replay — [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) / [`scripts/replay-har.mjs`](scripts/replay-har.mjs); convert zip ↔ embed — [`CONVERT_HAR.md`](CONVERT_HAR.md) / [`scripts/convert-har.mjs`](scripts/convert-har.mjs).
 
 ### Requirements
 
@@ -229,6 +229,9 @@ RATE_LIMIT_MAX=10
 RATE_LIMIT_WINDOW_MS=60000
 # Optional: raise failed-request cap
 # MAX_NETWORK_FAILED_ENTRIES=1000
+# Optional: SSRF guard (default on; disable only for controlled lab use)
+# ENABLE_SSRF_BROWSER_GUARD=0
+# MAX_SSRF_BLOCKED_ENTRIES=1000
 # then: sudo systemctl restart url-checker
 ```
 
@@ -237,6 +240,8 @@ RATE_LIMIT_WINDOW_MS=60000
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `MAX_NETWORK_FAILED_ENTRIES` | `500` | Cap Playwright **`requestfailed`** rows in UI/API per check (clamp **1–10000**; invalid → 500). Excess failures dropped; check still succeeds. Not a 1:1 HAR `status: -1` list — see [README — Failed / incomplete requests](README.md#failed--incomplete-requests). |
+| `MAX_SSRF_BLOCKED_ENTRIES` | `500` | Cap SSRF route-abort rows (`networkSsrfBlockedRequests`) per check (clamp **1–10000**). |
+| `ENABLE_SSRF_BROWSER_GUARD` | on | DNS pin + `page.route` abort in Chromium. Set `0`/`false`/`off` to disable. See [README — SSRF requests](README.md#ssrf-requests). |
 
 Set on the **running** Node process (`.env`, systemd `Environment=` / comments in [`deploy/url-checker.service`](deploy/url-checker.service), Compose `environment:`), then **restart** the app. See [`.env.example`](.env.example).
 
@@ -246,6 +251,7 @@ Set on the **running** Node process (`.env`, systemd `Environment=` / comments i
 | **HTTP protocol controls** | No extra packages. Allowlisted Chromium launch args only: `--disable-http2` and/or `--disable-quic` (HTTP/3). UI order: HTTP/1.1 only → Disable HTTP/2 → Disable HTTP/3 (QUIC). Per-check default **off**; server allow default **on**. Does not change nginx. See [`docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md`](docs/HTTP_PROTOCOL_ARGS_IMPLEMENT_PLAN.md) and [README — HTTP protocol](README.md#http-protocol-controls). |
 | **Headless / Costco-class sites** | No deploy flags. App sets headed Chrome UA / `sec-ch-ua` by default and may auto-retry with `--disable-http2` after `ERR_HTTP2_PROTOCOL_ERROR`. See [README](README.md#headless--err_http2_protocol_error-e-g-costco). |
 | **Failed / incomplete requests** | No deploy flags or packages. Collects Playwright `requestfailed` into `networkFailedRequests`; panel below Network requests (**hidden when empty**). Cap with `MAX_NETWORK_FAILED_ENTRIES` (default 500). **Excluded from UI:** HTTP 4xx/5xx (stay in Network responses); incomplete-at-flush; failures after collector flush; reconstructing from HAR (HAR may show more `status: -1` than the UI). Details: [README](README.md#failed--incomplete-requests). |
+| **SSRF browser guard** | Default **on** (`ENABLE_SSRF_BROWSER_GUARD=0` to disable). DNS pin + `page.route` abort for unsafe subresources → `networkSsrfBlockedRequests`; **SSRF requests** panel below Failed / incomplete requests. Cap `MAX_SSRF_BLOCKED_ENTRIES` (default 500). Plan: [`docs/SSRF_BROWSER_GUARD_IMPLEMENT_PLAN.md`](docs/SSRF_BROWSER_GUARD_IMPLEMENT_PLAN.md). Prefer host egress firewall as backstop (deny RFC1918 / metadata). |
 | **Network Method column** | No deploy flags. Response and failed rows include HTTP `method` (`GET`/`POST`/…); network CSV exports `method`. Ships with app rebuild only. See [README — Network requests](README.md#network-requests-panel). |
 | **Capture HAR** | Playwright `recordHar` (`mode: "full"`) writes an ephemeral archive under OS temp (`/tmp/url-checker-har-*`), returns it in the API response, then **deletes** the directory. UI radios (JSON → Zip) / `harFormat` on `POST /api/check`: **`json`** (default, embed → `har` / `.har`) or **`zip`** (attach → `harZipBase64` / `.har.zip`). See format table below. |
 | **Capture NetLog** | Chromium `--log-net-log` under OS temp (`/tmp/url-checker-netlog-*`); returns `netLogBase64` (`.netlog.json` for [NetLog Viewer](https://netlog-viewer.appspot.com/)); soft cap `MAX_NETLOG_BYTES` (~45 MB) + `--net-log-max-size-mb`. Modes: `default` / `includeSensitive` / `everything`. Flushes on **browser close**. Gate: `ALLOW_CAPTURE_NETLOG`. See [README — NetLog](README.md#netlog-capture-chromium-network-stack-dump). |
@@ -361,7 +367,7 @@ Supporting Compose settings:
 - Healthcheck against `/`
 - `restart: unless-stopped`
 - Optional `NODE_OPTIONS` in Compose (commented) if Capture HAR / NetLog + large pages OOM the Node process
-- After rebuild: Capture HAR hang fix, headless HTTP/2 mitigation, HAR formats (default **json** / optional **zip**, `MAX_HAR_BYTES` ~45 MB), **Capture NetLog** (`MAX_NETLOG_BYTES` ~45 MB, `ALLOW_CAPTURE_NETLOG`), Failed / incomplete requests UI (`MAX_NETWORK_FAILED_ENTRIES`), and Network **Method** column are in the image (no Compose env required beyond optional feature gates / caps)
+- After rebuild: Capture HAR hang fix, headless HTTP/2 mitigation, HAR formats (default **json** / optional **zip**, `MAX_HAR_BYTES` ~45 MB), **Capture NetLog** (`MAX_NETLOG_BYTES` ~45 MB, `ALLOW_CAPTURE_NETLOG`), Failed / incomplete requests UI (`MAX_NETWORK_FAILED_ENTRIES`), SSRF browser guard (`ENABLE_SSRF_BROWSER_GUARD` default on), and Network **Method** column are in the image (no Compose env required beyond optional feature gates / caps)
 
 ### Requirements
 

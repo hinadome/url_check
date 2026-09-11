@@ -8,6 +8,7 @@ import {
   exportNetLog,
   exportNetworkCsv,
   exportNetworkFailedCsv,
+  exportNetworkSsrfCsv,
   exportScreenshotPng,
   hasHarDownload,
   hasNetLogDownload,
@@ -26,6 +27,7 @@ export function ExportMenu({ result }: ExportMenuProps) {
   const hasHar = hasHarDownload(result);
   const hasNetLog = hasNetLogDownload(result);
   const hasFailedNetwork = (result.networkFailedRequests ?? []).length > 0;
+  const hasSsrfNetwork = (result.networkSsrfBlockedRequests ?? []).length > 0;
   const harError = result.harError ?? null;
   const netLogError = result.netLogError ?? null;
   const harLabel =
@@ -206,6 +208,24 @@ export function ExportMenu({ result }: ExportMenuProps) {
                 </span>
               ) : (
                 <span className="muted">No failed requests in this check</span>
+              )}
+            </button>
+          </li>
+          <li role="none">
+            <button
+              type="button"
+              role="menuitem"
+              className="export-menu-item"
+              disabled={!hasSsrfNetwork}
+              onClick={() => run(() => exportNetworkSsrfCsv(result))}
+            >
+              <span>Download SSRF network CSV</span>
+              {hasSsrfNetwork ? (
+                <span className="muted">
+                  SSRF blocked rows ({result.networkSsrfBlockedRequests!.length})
+                </span>
+              ) : (
+                <span className="muted">No SSRF blocked requests in this check</span>
               )}
             </button>
           </li>

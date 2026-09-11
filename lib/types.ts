@@ -8,6 +8,14 @@ export type DnsOverride = {
   ip: string;
 };
 
+/** Result of server-side URL validation before a browser check. */
+export type ValidatedUrlTarget = {
+  url: URL;
+  host: string;
+  /** Public IP chosen for Chromium DNS pin; null when not resolved (e.g. skipDnsLookup). */
+  pinnedIp: string | null;
+};
+
 /**
  * How Playwright records HAR bodies when `captureHar` is true.
  * - `json` — `content: "embed"` → `.har` JSON (binaries as base64 in HAR)
@@ -164,6 +172,22 @@ export type NetworkFailedRequestEntry = {
   requestHeaders: HeaderPair[];
 };
 
+/**
+ * Subresource blocked by the SSRF browser guard (Playwright route abort).
+ * Separate from `networkFailedRequests` (Playwright `requestfailed`).
+ */
+export type NetworkSsrfBlockedRequestEntry = {
+  url: string;
+  host: string;
+  method: string;
+  resourceType: string;
+  /** ISO-8601 timestamp when the block was observed */
+  date: string;
+  /** Why the SSRF guard blocked this request */
+  blockReason: string;
+  requestHeaders: HeaderPair[];
+};
+
 export type CheckResponse = {
   finalUrl: string;
   status: number;
@@ -176,8 +200,16 @@ export type CheckResponse = {
   networkRequests: NetworkRequestEntry[];
   /** Failed / aborted requests (no HTTP response); empty if none */
   networkFailedRequests: NetworkFailedRequestEntry[];
+  /** Requests blocked by the SSRF browser route guard; empty if none */
+  networkSsrfBlockedRequests: NetworkSsrfBlockedRequestEntry[];
   /** Main document Navigation Timing (once per check) */
   navigationTiming: NavigationTimingSnapshot | null;
+  /** Host pinned for Chromium DNS when SSRF guard is enabled */
+  dnsPinnedHost: string | null;
+  /** Public IP pinned for Chromium DNS when SSRF guard is enabled */
+  dnsPinnedIp: string | null;
+  /** Whether the SSRF browser guard (DNS pin + route abort) ran for this check */
+  ssrfBrowserGuardEnabled: boolean;
   dnsOverride: DnsOverride | null;
   /** Whether this check ignored TLS certificate errors */
   ignoreCertErrors: boolean;

@@ -14,7 +14,7 @@ import type {
 import {
   validateDnsOverride,
   validateHeaders,
-  validateUrl,
+  validateUrlWithPin,
 } from "@/lib/validate";
 
 export const runtime = "nodejs";
@@ -46,7 +46,11 @@ function emptyErrorPayload(message: string): CheckResponse {
     responseHeaders: [],
     networkRequests: [],
     networkFailedRequests: [],
+    networkSsrfBlockedRequests: [],
     navigationTiming: null,
+    dnsPinnedHost: null,
+    dnsPinnedIp: null,
+    ssrfBrowserGuardEnabled: false,
     dnsOverride: null,
     ignoreCertErrors: false,
     disableHttp2: false,
@@ -97,8 +101,8 @@ export async function POST(request: Request) {
     }
 
     const dnsOverride = validateDnsOverride(body.dnsOverride, provisionalHost);
-    const parsedUrl = await validateUrl(body.url.trim(), {
-      skipDnsLookup: dnsOverride !== null,
+    const validated = await validateUrlWithPin(body.url.trim(), {
+      dnsOverride: dnsOverride ?? undefined,
     });
     const headers = validateHeaders(body.headers);
 
@@ -138,8 +142,13 @@ export async function POST(request: Request) {
       );
     }
 
+    const dnsPin =
+      validated.pinnedIp != null
+        ? { host: validated.host, ip: validated.pinnedIp }
+        : null;
+
     const result = await fetchWithPlaywright(
-      parsedUrl.toString(),
+      validated.url.toString(),
       headers,
       dnsOverride,
       wantIgnoreCert,
@@ -149,6 +158,7 @@ export async function POST(request: Request) {
       protocol.disableHttp3,
       wantCaptureNetLog,
       netLogCaptureMode,
+      dnsPin,
     );
     return NextResponse.json(result);
   } catch (err) {

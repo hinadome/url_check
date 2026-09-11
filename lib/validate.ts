@@ -1,6 +1,16 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import type { DnsOverride, HeaderPair } from "./types";
+import {
+  assertPublicResolvedAddresses,
+  isBlockedHostname,
+  isPrivateOrReservedIp,
+  isValidHostnameLabel,
+  normalizeHostname,
+  selectPinnedPublicIp,
+} from "./ssrf-policy";
+import type { DnsOverride, HeaderPair, ValidatedUrlTarget } from "./types";
+
+export type { ValidatedUrlTarget } from "./types";
 
 const BLOCKED_HEADER_NAMES = new Set(
   [
@@ -21,79 +31,25 @@ const MAX_HEADER_NAME_LENGTH = 256;
 const MAX_HEADER_VALUE_LENGTH = 8192;
 const MAX_HEADERS = 50;
 
-function parseIpv4(ip: string): number[] | null {
-  const parts = ip.split(".");
-  if (parts.length !== 4) return null;
-  const nums = parts.map((p) => Number(p));
-  if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
-  return nums;
-}
+export type ValidateUrlOptions = {
+  /** When set, skip DNS lookup and use this host/IP (Force DNS UI). */
+  dnsOverride?: DnsOverride;
+  /** @deprecated Use dnsOverride instead. */
+  skipDnsLookup?: boolean;
+};
 
-function isPrivateOrReservedIp(ip: string): boolean {
-  const version = isIP(ip);
-  if (version === 4) {
-    const parts = parseIpv4(ip);
-    if (!parts) return true;
-    const [a, b] = parts;
-    if (a === 10) return true;
-    if (a === 127) return true;
-    if (a === 0) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-    if (a >= 224) return true; // multicast / reserved
-    return false;
+export async function validateUrlWithPin(
+  input: string,
+  options: ValidateUrlOptions = {},
+): Promise<ValidatedUrlTarget> {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    throw new Error("URL is required");
   }
 
-  if (version === 6) {
-    const normalized = ip.toLowerCase();
-    if (normalized === "::" || normalized === "::1") return true;
-    if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true; // ULA
-    if (normalized.startsWith("fe80")) return true; // link-local
-    if (normalized.startsWith("ff")) return true; // multicast
-    // IPv4-mapped IPv6
-    const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isPrivateOrReservedIp(mapped[1]);
-    return false;
-  }
-
-  return true;
-}
-
-function normalizeHostname(hostname: string): string {
-  return hostname.toLowerCase().replace(/\.$/, "");
-}
-
-function isBlockedHostname(hostname: string): boolean {
-  const host = normalizeHostname(hostname);
-  if (
-    host === "localhost" ||
-    host === "localhost.localdomain" ||
-    host.endsWith(".localhost") ||
-    host.endsWith(".local") ||
-    host.endsWith(".internal")
-  ) {
-    return true;
-  }
-  return false;
-}
-
-function isValidHostnameLabel(hostname: string): boolean {
-  if (!hostname || hostname.length > 253) return false;
-  if (isIP(hostname)) return false;
-  return /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*$/i.test(
-    hostname,
-  );
-}
-
-export async function validateUrl(
-  rawUrl: string,
-  options?: { skipDnsLookup?: boolean },
-): Promise<URL> {
   let parsed: URL;
   try {
-    parsed = new URL(rawUrl);
+    parsed = new URL(trimmed);
   } catch {
     throw new Error("Invalid URL");
   }
@@ -120,11 +76,35 @@ export async function validateUrl(
     if (isPrivateOrReservedIp(hostname)) {
       throw new Error("Private or reserved IP addresses are not allowed");
     }
-    return parsed;
+    return { url: parsed, host: hostname, pinnedIp: hostname };
   }
 
-  if (options?.skipDnsLookup) {
-    return parsed;
+  if (!isValidHostnameLabel(hostname)) {
+    throw new Error("Invalid hostname");
+  }
+
+  const override = options.dnsOverride;
+  if (override) {
+    if (isPrivateOrReservedIp(override.ip)) {
+      throw new Error("Force-resolve IP cannot be private or reserved");
+    }
+    if (override.host !== hostname) {
+      throw new Error("Force-resolve host must match the URL hostname");
+    }
+    return { url: parsed, host: hostname, pinnedIp: override.ip };
+  }
+
+  if (options.skipDnsLookup) {
+    return { url: parsed, host: hostname, pinnedIp: null };
+  }
+
+  const safety = await assertPublicResolvedAddresses(hostname);
+  if (!safety.safe) {
+    throw new Error(
+      safety.reason === "DNS resolution failed"
+        ? "Could not resolve hostname"
+        : safety.reason,
+    );
   }
 
   let addresses: { address: string; family: number }[];
@@ -134,17 +114,20 @@ export async function validateUrl(
     throw new Error("Could not resolve hostname");
   }
 
-  if (!addresses.length) {
-    throw new Error("Could not resolve hostname");
+  const pinnedIp = selectPinnedPublicIp(addresses);
+  if (!pinnedIp) {
+    throw new Error("Hostname resolves to a private or reserved address");
   }
 
-  for (const { address } of addresses) {
-    if (isPrivateOrReservedIp(address)) {
-      throw new Error("Hostname resolves to a private or reserved address");
-    }
-  }
+  return { url: parsed, host: hostname, pinnedIp };
+}
 
-  return parsed;
+export async function validateUrl(
+  input: string,
+  options: ValidateUrlOptions = {},
+): Promise<URL> {
+  const { url } = await validateUrlWithPin(input, options);
+  return url;
 }
 
 export function validateDnsOverride(
@@ -241,3 +224,5 @@ export function validateHeaders(
 
   return result;
 }
+
+export { isPrivateOrReservedIp } from "./ssrf-policy";

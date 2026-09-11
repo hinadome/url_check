@@ -8,6 +8,8 @@
 #   ENABLE_NETWORK_ACL / NETWORK_ACL_ALLOWLIST / ENABLE_RATE_LIMIT /
 #     RATE_LIMIT_MAX / RATE_LIMIT_WINDOW_MS / TRUST_PROXY
 #   MAX_NETWORK_FAILED_ENTRIES (default 500; cap requestfailed UI/API rows)
+#   MAX_SSRF_BLOCKED_ENTRIES (default 500; cap SSRF route-abort UI/API rows)
+#   ENABLE_SSRF_BROWSER_GUARD (default on; set 0 to disable DNS pin + route abort)
 #   NODE_OPTIONS (optional heap for large HAR / NetLog + screenshot JSON)
 #
 # After image rebuild, the app includes:
@@ -16,6 +18,7 @@
 #     not stored on server (same as HAR); see README NetLog vs Chrome
 #   - Capture HAR hang fix (skip network bodies when HAR on; body/flush timeouts)
 #   - Failed / incomplete requests panel (requestfailed; HAR status -1)
+#   - SSRF browser guard (DNS pin + route abort; SSRF requests panel when blocked)
 #   - Network requests Method column (responses + failed rows; CSV)
 #   - Headless ERR_HTTP2_PROTOCOL_ERROR mitigation (headed UA / sec-ch-ua)
 #   - HTTP protocol controls (--disable-http2 / --disable-quic)

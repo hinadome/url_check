@@ -2,6 +2,7 @@ import type {
   CheckResponse,
   NetworkFailedRequestEntry,
   NetworkRequestEntry,
+  NetworkSsrfBlockedRequestEntry,
 } from "./types";
 
 function sanitizeFilenamePart(value: string): string {
@@ -58,6 +59,7 @@ export function toLightResult(result: CheckResponse): CheckResponse {
       bodyTruncated: false,
     })),
     networkFailedRequests: result.networkFailedRequests ?? [],
+    networkSsrfBlockedRequests: result.networkSsrfBlockedRequests ?? [],
   };
 }
 
@@ -237,6 +239,40 @@ export function exportNetworkFailedCsv(result: CheckResponse): void {
   const csv = `\uFEFF${[header.join(","), ...rows].join("\n")}\n`;
   downloadBlob(
     `${exportBasename(result)}-network-failed.csv`,
+    new Blob([csv], { type: "text/csv;charset=utf-8" }),
+  );
+}
+
+/** Metadata CSV for SSRF-blocked subresources (route abort). */
+export function exportNetworkSsrfCsv(result: CheckResponse): void {
+  const header = [
+    "date",
+    "method",
+    "url",
+    "host",
+    "resourceType",
+    "blockReason",
+    "requestHeaderCount",
+  ];
+
+  const rows = (result.networkSsrfBlockedRequests ?? []).map(
+    (entry: NetworkSsrfBlockedRequestEntry) =>
+      [
+        entry.date,
+        entry.method,
+        entry.url,
+        entry.host,
+        entry.resourceType,
+        entry.blockReason,
+        entry.requestHeaders?.length ?? 0,
+      ]
+        .map(csvEscape)
+        .join(","),
+  );
+
+  const csv = `\uFEFF${[header.join(","), ...rows].join("\n")}\n`;
+  downloadBlob(
+    `${exportBasename(result)}-network-ssrf.csv`,
     new Blob([csv], { type: "text/csv;charset=utf-8" }),
   );
 }
