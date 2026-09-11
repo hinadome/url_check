@@ -15,7 +15,7 @@
     "deploy:container": "bash scripts/deploy-container.sh"
   },
   "dependencies": {
-    "next": "16.3.0",
+    "next": "^16.3.5",
     "playwright": "^1.62.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
@@ -29,5 +29,8 @@
     "eslint-config-next": "16.3.0",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "allowScripts": {
+    "unrs-resolver@1.12.2": true
   }
 }
