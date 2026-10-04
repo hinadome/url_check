@@ -870,11 +870,21 @@ For **production Playwright checks**, use a **VM or container** instead — see 
 - Skips rewriting the HTTP nginx site when the rendered config is unchanged
 - Stock `sites-enabled/default`: see **[`NGINX_DISABLE_DEFAULT`](DEPLOYMENT.md#nginx_disable_default-stock-welcome-site-only)** in the deploy guide (not unlinked on shared hosts by default)
 
-HTTPS (after DNS points at the VM):
+HTTPS — Let's Encrypt (after DNS points at the VM, ports 80/443 open):
 
 ```bash
 ./scripts/setup-https.sh checker.example.com --email ops@example.com
 ```
+
+HTTPS — self-signed (no public DNS / ACME needed; internal hosts, IP-only VMs, dev):
+
+```bash
+./scripts/setup-https.sh checker.example.com --self-signed
+./scripts/setup-https.sh 203.0.113.10 --self-signed            # IP-only VM
+./scripts/setup-https.sh internal.lan --self-signed --san IP:10.0.0.5
+```
+
+Self-signed certs are generated with `openssl` into `/etc/ssl/url-checker/<domain>/` and are **not CA-trusted** (browsers warn; verify with `curl -k`). Regenerate with `--force-renew`.
 
 Full options, env vars, and troubleshooting: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
@@ -1136,7 +1146,7 @@ url_checker/
 │   └── validate.ts           # URL / header / DNS override guards
 ├── scripts/
 │   ├── deploy-vm.sh          # VM install/build/systemd; re-runnable for updates
-│   ├── setup-https.sh        # Post-deploy Let's Encrypt + nginx HTTPS (domain arg)
+│   ├── setup-https.sh        # Post-deploy HTTPS: Let's Encrypt or --self-signed (domain/IP)
 │   └── deploy-container.sh   # Docker Compose build/up (optional APP_URL)
 ├── deploy/
 │   ├── url-checker.service   # systemd unit template

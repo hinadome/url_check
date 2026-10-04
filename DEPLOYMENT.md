@@ -14,7 +14,7 @@ Related files:
 | [`deploy/url-checker.service`](deploy/url-checker.service) | systemd unit template used by the VM script |
 | [`deploy/nginx-url-checker.conf`](deploy/nginx-url-checker.conf) | nginx reverse-proxy site template (HTTP front → Next.js) |
 | [`deploy/nginx-url-checker-https.conf`](deploy/nginx-url-checker-https.conf) | nginx HTTPS site template (TLS + HTTP→HTTPS redirect) |
-| [`scripts/setup-https.sh`](scripts/setup-https.sh) | Post-deploy Let's Encrypt cert + HTTPS nginx config (domain required) |
+| [`scripts/setup-https.sh`](scripts/setup-https.sh) | Post-deploy HTTPS nginx config: **Let's Encrypt** (default) or **self-signed** (`--self-signed`) cert (domain or IP required) |
 | [`scripts/replay-har.mjs`](scripts/replay-har.mjs) | Optional **client-side** HAR replay (not part of deploy); see [`REPLAY_SCRIPT.md`](REPLAY_SCRIPT.md) |
 | [`scripts/convert-har.mjs`](scripts/convert-har.mjs) | Optional **client-side** zip ↔ embed convert; see [`CONVERT_HAR.md`](CONVERT_HAR.md) |
 | [`Dockerfile`](Dockerfile) | Production image (Playwright base + Next.js) |
@@ -189,7 +189,32 @@ sudo systemctl reload nginx
 curl -sI "http://127.0.0.1:${NGINX_PORT:-80}/"
 ```
 
-**HTTPS:** after HTTP deploy, run [`scripts/setup-https.sh`](scripts/setup-https.sh) with your domain (Let's Encrypt + nginx 443). Or terminate TLS on a cloud load balancer and set `APP_URL=https://your.domain`.
+**HTTPS:** after HTTP deploy, run [`scripts/setup-https.sh`](scripts/setup-https.sh) to configure nginx on 443 (+ HTTP→HTTPS redirect). Two certificate modes; both reuse [`deploy/nginx-url-checker-https.conf`](deploy/nginx-url-checker-https.conf) and are left untouched on later `deploy-vm.sh` re-runs. Or terminate TLS on a cloud load balancer and set `APP_URL=https://your.domain`.
+
+**Let's Encrypt (default)** — public DNS + ports 80/443 required:
+
+```bash
+./scripts/setup-https.sh checker.example.com --email ops@example.com
+./scripts/setup-https.sh checker.example.com --staging       # test issuance
+./scripts/setup-https.sh checker.example.com --force-renew   # renew now
+```
+
+- Installs `certbot` + `python3-certbot-nginx`, serves the ACME HTTP-01 challenge from `/var/www/certbot`, writes the cert to `/etc/letsencrypt/live/<domain>/`, and installs a renewal deploy hook (`certbot.timer` reloads nginx).
+
+**Self-signed (`--self-signed`)** — no public DNS, no ACME, no email; good for internal hosts, IP-only VMs, and dev/test:
+
+```bash
+./scripts/setup-https.sh checker.example.com --self-signed
+./scripts/setup-https.sh 203.0.113.10 --self-signed                 # IP-only VM
+./scripts/setup-https.sh internal.lan --self-signed \
+  --san alt.lan --san IP:10.0.0.5                                   # extra SANs
+./scripts/setup-https.sh internal.lan --self-signed --force-renew   # regenerate
+```
+
+- Generates the cert with `openssl` into `/etc/ssl/url-checker/<domain>/` as `fullchain.pem` / `privkey.pem` (key `chmod 600`), with a Subject Alternative Name covering the domain/IP plus any `--san` entries (bare values auto-prefixed `DNS:` / `IP:`).
+- No certbot, ACME webroot, or renewal timer is installed. Regenerate with `--force-renew`.
+- **Not CA-trusted** — browsers warn about the certificate; verify with `curl -skI https://<host>/`.
+- Options: `SELF_SIGNED_DAYS` (validity, default `825`), `SELF_SIGNED_DIR_BASE` (cert dir base, default `/etc/ssl/url-checker`). `--staging` and `--email` do not apply (rejected / ignored).
 
 ### App features that affect the host (HAR, TLS ignore, HTTP protocol, failed requests)
 

@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Self-signed HTTPS** mode in [`scripts/setup-https.sh`](scripts/setup-https.sh) (`--self-signed`): generates an `openssl` cert into `/etc/ssl/url-checker/<domain>/` (`fullchain.pem` / `privkey.pem`, key `chmod 600`) and reuses the existing [`deploy/nginx-url-checker-https.conf`](deploy/nginx-url-checker-https.conf) 443 site — no certbot/ACME, no public DNS, no email.
+  - Accepts a **bare IPv4** target (IP-only VMs); Let's Encrypt mode now rejects bare IPs with a clear message.
+  - `--san DNS:x` / `--san IP:x` (bare values auto-prefixed) for extra Subject Alternative Names; `--force-renew` regenerates.
+  - Options `SELF_SIGNED_DAYS` (default `825`), `SELF_SIGNED_DIR_BASE` (default `/etc/ssl/url-checker`); fallback to a temp openssl config when `-addext` is unsupported.
+  - Not CA-trusted (browsers warn; verify with `curl -k`). `deploy-vm.sh` continues to leave the TLS site file untouched on re-runs.
+  - Docs: [README.md](README.md) VM deploy + [DEPLOYMENT.md](DEPLOYMENT.md) HTTPS section.
 - **Light / dark mode** toggle in the header (`ThemeProvider` + `ThemeToggle`): persists in `localStorage` (`url-checker-theme`), defaults to system preference, applies `data-theme` on `<html>` after mount (no blocking script — avoids Safari React script / hydration issues); CSS `prefers-color-scheme` covers the pre-JS paint.
 - Network **Remote IP** (`remoteIp` / `remotePort` via `response.serverAddr()`) and **HTTP** (`httpVersion` via `response.httpVersion()`) columns.
 - **Failed / incomplete requests** panel below Network requests (`components/NetworkFailedRequestsPanel.tsx`, `networkFailedRequests` on `CheckResponse`):
