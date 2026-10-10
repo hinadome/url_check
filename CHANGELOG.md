@@ -86,13 +86,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Cause:** Network collector called `response.body()` for every response and `flush()` awaited all of them. Some Site keeps many long-lived/streaming requests open, so some `body()` calls hang indefinitely — worse when HAR recording is also on (hundreds of resources). The UI waited forever after navigation looked “done.”
   - **Fix:** (1) **5s timeout** per `response.body()` and **15s cap** on collector `flush()`; (2) when **Capture HAR** is on, skip network-panel body capture (`captureBodies: false`) — bodies live in the HAR archive; (3) stop accepting new collector tasks once flush starts. Files: [`lib/network-collector.ts`](lib/network-collector.ts), [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts).
 
-- **`page.goto: net::ERR_HTTP2_PROTOCOL_ERROR` on sites like Costco** (e.g. `https://www.costco.com/`)
+- **`page.goto: net::ERR_HTTP2_PROTOCOL_ERROR` on some site ** 
 
   **Error**
   ```text
-  page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://www.costco.com/
+  page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://www.example.com/
   Call log:
-    - navigating to "https://www.costco.com/", waiting until "load"
+    - navigating to "https://www.example.com/", waiting until "load"
   ```
 
   **Cause**
