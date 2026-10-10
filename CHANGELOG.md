@@ -97,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   **Cause**
   - Playwright launches **headless** Chromium, which advertises `HeadlessChrome` in `navigator.userAgent` and in the `sec-ch-ua` client hint.
-  - Some CDN/WAF stacks (notably **Akamai**, used by Costco and similar retailers) reject or abort that fingerprint during HTTP/2 negotiation, which Chromium surfaces as `ERR_HTTP2_PROTOCOL_ERROR` rather than a normal HTTP status.
+  - Some CDN/WAF stacks reject or abort that fingerprint during HTTP/2 negotiation, which Chromium surfaces as `ERR_HTTP2_PROTOCOL_ERROR` rather than a normal HTTP status.
   - Passing only Chromium `--disable-http2` did **not** reliably load Costco in testing (often hung/timeout); the working fix was removing headless branding from UA / `sec-ch-ua`.
 
   **Fix (implementation in [`lib/playwright-fetch.ts`](lib/playwright-fetch.ts))**
