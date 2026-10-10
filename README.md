@@ -211,7 +211,7 @@ Admins: `ALLOW_HTTP_PROTOCOL_CONTROLS=0` hides the UI and rejects API requests t
 
 #### Headless / `ERR_HTTP2_PROTOCOL_ERROR` (e.g. Costco)
 
-Headless Chromium advertises `HeadlessChrome` in the user agent and `sec-ch-ua`. Some CDNs/WAFs (Akamai and similar) abort the connection with `net::ERR_HTTP2_PROTOCOL_ERROR`. URL Checker mitigates this by default:
+Headless Chromium advertises `HeadlessChrome` in the user agent and `sec-ch-ua`. Some CDNs/WAFs abort the connection with `net::ERR_HTTP2_PROTOCOL_ERROR`. URL Checker mitigates this by default:
 
 1. Sets a headed Chrome `userAgent` and `sec-ch-ua` / `sec-ch-ua-mobile` / `sec-ch-ua-platform` unless the request already includes those headers.
 2. If navigation still fails with `ERR_HTTP2_PROTOCOL_ERROR` and **Disable HTTP/2** was not requested, retries once with `--disable-http2` and returns `http2FallbackApplied: true` (meta strip shows “auto after HTTP/2 error”).
@@ -817,7 +817,7 @@ The hang was in the **Network requests collector** (`lib/network-collector.ts`):
 
 1. On every `response` event, the collector called Playwright `response.body()` to fill the Network **Content** tab (up to ~512KB per response, max 2000 entries).
 2. At the end of the check, `network.flush()` ran `Promise.all(pending)` and waited for **every** in-flight body read.
-3. Costco (and similar Akamai-backed retail sites) keeps **hundreds** of requests alive—ads, analytics, beacons, long-lived streams. Some of those `response.body()` calls **never resolve**.
+3. Some site keeps **hundreds** of requests alive—ads, analytics, beacons, long-lived streams. Some of those `response.body()` calls **never resolve**.
 4. With Capture HAR on, more resources are observed and body reads compete with HAR’s own body buffering, so the stall was much more likely. The UI waited forever on flush even though navigation, screenshot, and HAR write were already done (or nearly done).
 
 So the process looked stuck on “HAR”, but it was stuck on **network body flush**, not on writing `session.har` / `session.har.zip`.
